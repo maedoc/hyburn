@@ -1,0 +1,20 @@
+# Multi-parameter BoxUniform prior for SBI pipeline — 128 samples
+#
+# Run:
+#   hyburn pipeline -c examples/demo.toml -p examples/sweep_multi_param.toml -o output/multi --backend ndarray
+
+n_steps = 10000
+n_samples = 128
+hidden_units = 64
+n_flows = 4
+epochs = 200
+batch_size = 16
+learning_rate = 1e-3
+
+[prior]
+BoxUniform = [
+    { name = "subnetworks[0].params[1]", min = -0.5, max = 0.5 },
+    { name = "subnetworks[0].params[5]", min = 0.01, max = 0.05 },
+    { name = "subnetworks[0].params[4]", min = -0.02, max = 0.02 },
+]
+seed = 123

@@ -1,0 +1,38 @@
+# Jansen-Rit whole-brain — 74 nodes, 10k steps
+#
+# The Jansen-Rit model is a neural mass model of a cortical column with
+# 6 state variables (V_p, V_e, V_i, y0, y1, y2) and 13 parameters.
+#
+# Run:
+#   hyburn run -c examples/jansen_rit_evoked.toml -o output/jr --backend ndarray
+#   hyburn run -c examples/jansen_rit_evoked.toml -o output/jr --backend cuda
+
+sim_length = 1000.0
+dt = 0.1
+integrator = "heun"
+nsig = 0.0
+
+[network]
+
+[[network.subnetworks]]
+model = "JansenRit"
+nnodes = 74
+nmodes = 1
+# 13 params: A, a, b, B, v0, e_max, r, J, a_1, a_2, a_3, a_4, mu
+params = [3.25, 22.0, 0.1, 0.05, 5.52, 0.0025, 0.56, 135.0, 1.0, 0.8, 0.25, 0.25, 0.22]
+initial_state = "examples/init_jr_74.npy"
+
+[[network.projections]]
+src = 0
+tgt = 0
+conn_type = "all_to_all"
+coupling_fn = "Linear"
+coupling_params = [0.1]
+weights = 0.01
+cvar_map = "0:0"
+delays = []
+
+[[stimuli]]
+target = 0
+temporal = "impulse"
+params = [500.0, 5.0]

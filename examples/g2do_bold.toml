@@ -1,0 +1,34 @@
+# G2DO whole-brain with BOLD monitor — 74 nodes, 10k steps
+#
+# Run:
+#   hyburn run -c examples/g2do_bold.toml -o output/g2do_bold --backend ndarray
+#   hyburn run -c examples/g2do_bold.toml -o output/g2do_bold --backend cuda
+
+sim_length = 10000.0     # 10 s
+dt = 0.1
+integrator = "heun"
+nsig = 0.05
+
+[network]
+
+[[network.subnetworks]]
+model = "Generic2dOscillator"
+nnodes = 74
+nmodes = 1
+params = [1.0, 0.4, -2.0, -10.0, 0.0, 0.02, 3.0, 1.0, 0.0, 1.0, 1.0, 1.0]
+initial_state = "examples/init_g2do_74.npy"
+
+[[network.projections]]
+src = 0
+tgt = 0
+conn_type = "all_to_all"
+coupling_fn = "Linear"
+coupling_params = [0.01]
+weights = 0.01
+cvar_map = "0:0"
+delays = []
+
+[[monitors]]
+monitor_type = "Bold"
+tr = 2.0
+bold_period = 10

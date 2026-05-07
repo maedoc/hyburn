@@ -1,0 +1,56 @@
+# Whole-brain multi-model — 3×74 nodes, 10k steps
+#
+# G2DO cortex + MPR thalamus + Kuramoto brainstem, all 74 nodes each.
+# Connected via scalar projections.
+#
+# NOTE: Multi-model projections with different ncvar values currently
+# trigger an engine bug (index out of bounds in cvar remapping).
+# Use only same-ncvar combinations until fixed.
+#
+# Run:
+#   hyburn run -c examples/whole_brain_multi_model.toml -o output/wholebrain --backend ndarray
+
+sim_length = 1000.0
+dt = 0.1
+integrator = "heun"
+nsig = 0.02
+
+[network]
+
+# Cortex — G2DO (nvar=2, ncvar=1)
+[[network.subnetworks]]
+model = "Generic2dOscillator"
+nnodes = 74
+nmodes = 1
+params = [1.0, 0.1, -2.0, -10.0, 0.0, 0.02, 3.0, 1.0, 0.0, 1.0, 1.0, 1.0]
+initial_state = "examples/init_g2do_74.npy"
+
+# Brainstem — Kuramoto (nvar=1, ncvar=1, same ncvar as G2DO → safe projection)
+[[network.subnetworks]]
+model = "Kuramoto"
+nnodes = 74
+nmodes = 1
+params = [10.0]
+initial_state = "examples/init_kuramoto_74.npy"
+
+# Kuramoto → G2DO (both ncvar=1, safe)
+[[network.projections]]
+src = 1
+tgt = 0
+conn_type = "all_to_all"
+coupling_fn = "Linear"
+coupling_params = [0.1]
+weights = 0.01
+cvar_map = "0:0"
+delays = []
+
+# G2DO self-coupling
+[[network.projections]]
+src = 0
+tgt = 0
+conn_type = "all_to_all"
+coupling_fn = "Linear"
+coupling_params = [0.01]
+weights = 0.01
+cvar_map = "0:0"
+delays = []

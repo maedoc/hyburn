@@ -1,0 +1,84 @@
+[package]
+name = "hyburn"
+version = "0.1.0"
+edition = "2024"
+description = "Burn-based GPU hybrid neural mass simulator with SBI"
+
+[[bin]]
+name = "hyburn"
+path = "src/main.rs"
+
+[[bin]]
+name = "hyburn-bench-realistic"
+path = "src/bin/hyburn_bench_realistic.rs"
+
+[[bin]]
+name = "hyburn-validate-batch"
+path = "src/bin/hyburn_validate_batch.rs"
+
+[[bin]]
+name = "hyburn-validate-accuracy"
+path = "src/bin/hyburn_validate_accuracy.rs"
+
+[[bin]]
+name = "hyburn-bench-generic-cuda"
+path = "src/bin/hyburn_bench_generic_cuda.rs"
+
+[[bin]]
+name = "hyburn-bench-batch-sweep"
+path = "src/bin/hyburn_bench_batch_sweep.rs"
+
+[[bin]]
+name = "hyburn-bench-gpu"
+path = "src/bin/hyburn_bench_gpu.rs"
+
+[[bin]]
+name = "hyburn-bench-gpu-mini"
+path = "src/bin/hyburn_bench_gpu_mini.rs"
+
+[dependencies]
+# Burn framework
+burn = { version = "0.16", features = ["std", "train", "ndarray"] }
+burn-wgpu = { version = "0.16", optional = true, features = ["template"] }
+burn-cuda = { version = "0.16", optional = true }
+burn-ndarray = "0.16"
+burn-autodiff = "0.16"
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Config
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+
+# IO
+ndarray = "0.15"
+
+# Math / RNG
+rand = "0.8"
+rand_distr = "0.4"
+
+# Logging
+log = "0.4"
+env_logger = "0.11"
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+plotters = { version = "0.3", default-features = false, features = ["svg_backend", "line_series", "errorbar", "point_series"] }
+rayon = "1.12.0"
+
+[dev-dependencies]
+approx = "0.5"
+tempfile = "3"
+serde_json = "1"
+
+[features]
+default = []
+wgpu = ["dep:burn-wgpu"]
+cuda = ["dep:burn-cuda"]
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1

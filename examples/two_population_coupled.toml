@@ -1,0 +1,51 @@
+# Two coupled G2DO populations — 74+74=148 nodes, 10k steps
+#
+# Two whole-brain sub-populations coupled via sigmoidal projection.
+#
+# Run:
+#   hyburn run -c examples/two_population_coupled.toml -o output/coupled --backend ndarray
+#   hyburn run -c examples/two_population_coupled.toml -o output/coupled --backend cuda
+
+sim_length = 1000.0
+dt = 0.1
+integrator = "heun"
+nsig = 0.02
+
+[network]
+
+[[network.subnetworks]]
+model = "Generic2dOscillator"
+nnodes = 74
+nmodes = 1
+params = [1.0, 0.0, -2.0, -10.0, 0.0, 0.02, 3.0, 1.0, 0.0, 1.0, 1.0, 1.0]
+initial_state = "examples/init_g2do_74.npy"
+
+[[network.subnetworks]]
+model = "Generic2dOscillator"
+nnodes = 74
+nmodes = 1
+params = [1.0, 0.3, -2.0, -10.0, 0.0, 0.02, 3.0, 1.0, 0.0, 1.0, 1.0, 1.0]
+initial_state = "examples/init_g2do_74.npy"
+
+# Excitatory: pop0 → pop1 (sigmoidal coupling)
+[[network.projections]]
+src = 0
+tgt = 1
+conn_type = "all_to_all"
+coupling_fn = "Sigmoidal"
+coupling_params = [1.0, 0.0, 1.0]
+weights = 0.01
+cvar_map = "0:0"
+delays = []
+
+# Inhibitory: pop1 → pop0 (linear coupling)
+# Note: Difference coupling requires ncvar>=2, but G2DO has ncvar=1.
+[[network.projections]]
+src = 1
+tgt = 0
+conn_type = "all_to_all"
+coupling_fn = "Linear"
+coupling_params = [-0.02]
+weights = 0.01
+cvar_map = "0:0"
+delays = []

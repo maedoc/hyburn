@@ -1,0 +1,20 @@
+# SBI report quick-start
+# Generates a self-contained HTML with training loss, z-scores, shrinkage, and posterior scatter
+#
+# Default pipeline:
+#   1. Sweep I_ext from -0.5 to 0.5 (20 points, 500 steps each)
+#   2. Train MAF (200 epochs, batch 5)
+#   3. Sample posteriors (100 samples per test point)
+#   4. Compute diagnostics and render plots
+#
+# Run: hyburn sbi-report -c examples/demo.toml -o sbi-report.html
+#
+# Full options example:
+#   hyburn sbi-report \
+#     -c examples/demo.toml \
+#     -o sbi-report.html \
+#     --n-sweep 30 \
+#     --steps 1000 \
+#     --epochs 300 \
+#     --n-post-samples 200 \
+#     --batch-size 10

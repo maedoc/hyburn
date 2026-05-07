@@ -1,0 +1,24 @@
+# Build artifacts
+/target
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+
+# Generated output
+output/
+
+# Python (for validation scripts only)
+__pycache__/
+*.pyc
+
+# Benchmarks
+.benchmarks/
+
+# Compressed binaries
+*.upx

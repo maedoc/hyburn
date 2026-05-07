@@ -1,0 +1,105 @@
+# Stimulus patterns — 74 nodes per sub-population, 10k steps
+#
+# Four sub-populations of 74 nodes each, each receiving a different
+# stimulus temporal pattern: impulse, step, sinusoid, pulse_train.
+#
+# Run:
+#   hyburn run -c examples/stimulus_patterns.toml -o output/stim --backend ndarray
+#   hyburn run -c examples/stimulus_patterns.toml -o output/stim --backend cuda
+
+sim_length = 1000.0
+dt = 0.1
+integrator = "heun"
+nsig = 0.02
+
+[network]
+
+[[network.subnetworks]]
+model = "Generic2dOscillator"
+nnodes = 74
+nmodes = 1
+params = [1.0, 0.0, -2.0, -10.0, 0.0, 0.02, 3.0, 1.0, 0.0, 1.0, 1.0, 1.0]
+initial_state = "examples/init_g2do_74.npy"
+
+[[network.subnetworks]]
+model = "Generic2dOscillator"
+nnodes = 74
+nmodes = 1
+params = [1.0, 0.0, -2.0, -10.0, 0.0, 0.02, 3.0, 1.0, 0.0, 1.0, 1.0, 1.0]
+initial_state = "examples/init_g2do_74.npy"
+
+[[network.subnetworks]]
+model = "Generic2dOscillator"
+nnodes = 74
+nmodes = 1
+params = [1.0, 0.0, -2.0, -10.0, 0.0, 0.02, 3.0, 1.0, 0.0, 1.0, 1.0, 1.0]
+initial_state = "examples/init_g2do_74.npy"
+
+[[network.subnetworks]]
+model = "Generic2dOscillator"
+nnodes = 74
+nmodes = 1
+params = [1.0, 0.0, -2.0, -10.0, 0.0, 0.02, 3.0, 1.0, 0.0, 1.0, 1.0, 1.0]
+initial_state = "examples/init_g2do_74.npy"
+
+# Self-coupling per sub-population
+[[network.projections]]
+src = 0
+tgt = 0
+conn_type = "all_to_all"
+coupling_fn = "Linear"
+coupling_params = [0.01]
+weights = 0.01
+cvar_map = "0:0"
+delays = []
+
+[[network.projections]]
+src = 1
+tgt = 1
+conn_type = "all_to_all"
+coupling_fn = "Linear"
+coupling_params = [0.01]
+weights = 0.01
+cvar_map = "0:0"
+delays = []
+
+[[network.projections]]
+src = 2
+tgt = 2
+conn_type = "all_to_all"
+coupling_fn = "Linear"
+coupling_params = [0.01]
+weights = 0.01
+cvar_map = "0:0"
+delays = []
+
+[[network.projections]]
+src = 3
+tgt = 3
+conn_type = "all_to_all"
+coupling_fn = "Linear"
+coupling_params = [0.01]
+weights = 0.01
+cvar_map = "0:0"
+delays = []
+
+# Stimuli — one per sub-population
+[[stimuli]]
+target = 0
+temporal = "impulse"
+params = [200.0, 5.0]     # onset=200ms, amplitude=5.0
+
+[[stimuli]]
+target = 1
+temporal = "step"
+params = [200.0, 600.0, 1.0]  # onset=200ms, offset=600ms, amplitude=1.0
+
+[[stimuli]]
+target = 2
+temporal = "sinusoid"
+params = [100.0, 0.5, 50.0]  # onset=100ms, amplitude=0.5, frequency=50Hz
+
+[[stimuli]]
+target = 3
+temporal = "pulse_train"
+params = [200.0, 1.0, 50.0, 10.0]  # onset=200ms, amplitude=1.0, period=50ms, width=10ms
