@@ -10,6 +10,7 @@ mod tests {
     use burn::backend::ndarray::NdArray;
     use burn::tensor::{Tensor, TensorData};
 
+    #[cfg(not(target_arch = "wasm32"))]
     use crate::io::read_npy_f32;
     use crate::sbi::crosscoder::{CrossCoder, CrossCoderConfig};
     use crate::sbi::crosscoder_train::train_crosscoder;
@@ -51,6 +52,7 @@ mod tests {
         a.iter().zip(b.iter()).map(|(x, y)| (x - y).powi(2)).sum::<f32>() / n
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn test_crosscoder_matches_vbjax_reference() {
         let device = Default::default();

@@ -1,4 +1,4 @@
-#![cfg(feature = "cuda")]
+#![cfg(not(target_arch = "wasm32"))]
 
 //! CUDA/GPU integration test — runs the engine on the CUDA backend.
 

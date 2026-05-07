@@ -14,7 +14,9 @@ pub mod train;
 
 pub use config::MafConfig;
 pub use crosscoder::{CrossCoder, CrossCoderConfig, CrossCoderView, load_crosscoder, CROSSCODER_CKPT_EXT};
-pub use crosscoder_cohort::{encode_cohort, fit_mvn_over_latents, load_cohort_from_npy, MvnPrior};
+pub use crosscoder_cohort::{encode_cohort, fit_mvn_over_latents, MvnPrior};
+#[cfg(not(target_arch = "wasm32"))]
+pub use crosscoder_cohort::load_cohort_from_npy;
 pub use crosscoder_pipeline::{
     build_sim_config_with_sc, generate_synthetic_sc_matrices,
     run_crosscoder_simulation_pipeline,

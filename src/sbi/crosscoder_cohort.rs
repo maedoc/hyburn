@@ -8,6 +8,7 @@
 //! 5. Sample new latents from the MVN and decode to generate synthetic data.
 
 use crate::error::Result;
+#[cfg(not(target_arch = "wasm32"))]
 use crate::io::read_npy_f32;
 use crate::sbi::crosscoder::CrossCoder;
 use burn::tensor::{backend::Backend, Tensor, TensorData};
@@ -21,6 +22,7 @@ pub type CohortData = (Vec<Vec<f32>>, Vec<(usize, usize)>);
 /// Each file must be `[n_samples, input_dim_i]` in row-major order.
 ///
 /// Returns `(data_vecs, shapes)` where `shapes[i] = (n_samples, input_dim_i)`.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn load_cohort_from_npy(paths: &[impl AsRef<str>]) -> Result<CohortData> {
     let mut data_vecs = Vec::with_capacity(paths.len());
     let mut shapes = Vec::with_capacity(paths.len());

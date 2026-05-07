@@ -208,14 +208,27 @@ pub fn generate_report(cfg: ReportConfig) -> anyhow::Result<String> {
     );
 
     // 4. Try to read config file contents
-    let config_contents = std::fs::read_to_string(&cfg.config_path).ok();
+    let config_contents = {
+        #[cfg(not(target_arch = "wasm32"))]
+        { std::fs::read_to_string(&cfg.config_path).ok() }
+        #[cfg(target_arch = "wasm32")]
+        { None }
+    };
 
     // 5. Build the HTML report
     let report_data = ReportData {
-        command_line: std::env::args().collect::<Vec<_>>().join(" "),
-        working_dir: std::env::current_dir()
-            .map(|p| p.display().to_string())
-            .unwrap_or_else(|_| "<unknown>".to_string()),
+        command_line: {
+            #[cfg(not(target_arch = "wasm32"))]
+            { std::env::args().collect::<Vec<_>>().join(" ") }
+            #[cfg(target_arch = "wasm32")]
+            { "(wasm)".to_string() }
+        },
+        working_dir: {
+            #[cfg(not(target_arch = "wasm32"))]
+            { std::env::current_dir().map(|p| p.display().to_string()).unwrap_or_else(|_| "<unknown>".to_string()) }
+            #[cfg(target_arch = "wasm32")]
+            { "(browser)".to_string() }
+        },
         timestamp: chrono_now(),
         rust_info: "Rust (Burn NdArray backend)".to_string(),
         sweep_values,
@@ -230,6 +243,7 @@ pub fn generate_report(cfg: ReportConfig) -> anyhow::Result<String> {
     let html = render_report(&report_data, &cfg);
 
     // 6. Write to file
+    #[cfg(not(target_arch = "wasm32"))]
     std::fs::write(&cfg.output_path, &html)?;
 
     log::info!("SBI report written to {}", cfg.output_path);
@@ -237,13 +251,21 @@ pub fn generate_report(cfg: ReportConfig) -> anyhow::Result<String> {
 }
 
 fn chrono_now() -> String {
-    let output = std::process::Command::new("date")
-        .arg("-u")
-        .arg("+%Y-%m-%d %H:%M:%S UTC")
-        .output();
-    match output {
-        Ok(o) => String::from_utf8_lossy(&o.stdout).trim().to_string(),
-        Err(_) => format!("{:?}", std::time::SystemTime::now()),
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let output = std::process::Command::new("date")
+            .arg("-u")
+            .arg("+%Y-%m-%d %H:%M:%S UTC")
+            .output();
+        match output {
+            Ok(o) => String::from_utf8_lossy(&o.stdout).trim().to_string(),
+            Err(_) => format!("{:?}", std::time::SystemTime::now()),
+        }
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        // In WASM, just use SystemTime
+        format!("{:?}", std::time::SystemTime::now())
     }
 }
 

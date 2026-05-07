@@ -1,4 +1,4 @@
-#!/usr/bin/env rust
+#![cfg(not(target_arch = "wasm32"))]
 #![cfg(feature = "wgpu")]
 
 //! WGPU/GPU integration test — runs the engine on the WGPU backend.

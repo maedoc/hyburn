@@ -1,3 +1,4 @@
+#![cfg(not(target_arch = "wasm32"))]
 //! GPU integration test — verifies the engine runs on WGPU backend and produces valid results.
 
 use hyburn::engine::{EngineModel, HybridEngine, IntegratorKind};

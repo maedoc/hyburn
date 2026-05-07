@@ -6,6 +6,7 @@
 
 use crate::engine::bold::{BoldModel, BoldParameters};
 use crate::error::{Result, SimulationError};
+#[cfg(not(target_arch = "wasm32"))]
 use crate::io::write_npy_f32;
 
 /// A per-subnetwork BOLD monitor.
@@ -226,6 +227,8 @@ impl BoldMonitor {
     }
 
     /// Write the current BOLD time-series (down-sampled to TR) to an `.npy` file.
+    /// Not available in WASM builds.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn write_npy(&self,
         path: &str,
     ) -> Result<()> {
@@ -239,6 +242,8 @@ impl BoldMonitor {
     }
 
     /// Convenience: write to [`output_path`](Self::output_path) if set.
+    /// Not available in WASM builds.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn write_output(&self,
     ) -> Result<()> {
         match &self.output_path {

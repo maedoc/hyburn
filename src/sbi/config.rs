@@ -31,9 +31,20 @@ impl Default for MafConfig {
 }
 
 impl MafConfig {
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn from_file(path: &str) -> anyhow::Result<Self> {
         let content = std::fs::read_to_string(path)?;
         let config: Self = toml::from_str(&content)?;
+        Ok(config)
+    }
+
+    pub fn from_toml_str(s: &str) -> anyhow::Result<Self> {
+        let config: Self = toml::from_str(s)?;
+        Ok(config)
+    }
+
+    pub fn from_json_str(s: &str) -> anyhow::Result<Self> {
+        let config: Self = serde_json::from_str(s)?;
         Ok(config)
     }
 

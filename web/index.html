@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>hyburn — Neural Mass Simulator</title>
+    <style>
+        :root {
+            --bg: #0d1117;
+            --surface: #161b22;
+            --border: #30363d;
+            --text: #e6edf3;
+            --text-muted: #8b949e;
+            --accent: #58a6ff;
+            --accent-dim: #1f6feb;
+            --green: #3fb950;
+            --red: #f85149;
+            --yellow: #d29922;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+        }
+
+        header {
+            padding: 16px 24px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        header h1 {
+            font-size: 20px;
+            font-weight: 600;
+            color: var(--accent);
+        }
+
+        header span {
+            font-size: 12px;
+            color: var(--text-muted);
+            background: var(--surface);
+            padding: 4px 8px;
+            border-radius: 4px;
+            border: 1px solid var(--border);
+        }
+
+        main {
+            display: grid;
+            grid-template-columns: 320px 1fr;
+            grid-template-rows: auto 1fr;
+            height: calc(100vh - 57px);
+        }
+
+        /* Config panel */
+        .config-panel {
+            grid-row: 1 / 3;
+            background: var(--surface);
+            border-right: 1px solid var(--border);
+            padding: 16px;
+            overflow-y: auto;
+            font-size: 13px;
+        }
+
+        .config-panel h2 {
+            font-size: 14px;
+            font-weight: 600;
+            margin-bottom: 12px;
+            color: var(--accent);
+        }
+
+        .field {
+            margin-bottom: 10px;
+        }
+
+        .field label {
+            display: block;
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-bottom: 3px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .field input, .field select, .field textarea {
+            width: 100%;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            color: var(--text);
+            padding: 6px 8px;
+            font-size: 13px;
+            font-family: 'SF Mono', Menlo, monospace;
+        }
+
+        .field textarea {
+            min-height: 80px;
+            resize: vertical;
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 14px;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            background: var(--surface);
+            color: var(--text);
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+
+        .btn:hover { border-color: var(--accent); color: var(--accent); }
+
+        .btn-primary {
+            background: var(--accent-dim);
+            border-color: var(--accent-dim);
+            color: white;
+        }
+
+        .btn-primary:hover { background: var(--accent); }
+
+        .btn-danger { border-color: var(--red); color: var(--red); }
+        .btn-danger:hover { background: var(--red); color: white; }
+
+        .btn-group {
+            display: flex;
+            gap: 6px;
+            margin-top: 12px;
+        }
+
+        /* Viz panel */
+        .viz-panel {
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .viz-toolbar {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 8px 16px;
+            border-bottom: 1px solid var(--border);
+            background: var(--surface);
+            font-size: 12px;
+        }
+
+        .viz-toolbar .stat {
+            color: var(--text-muted);
+        }
+
+        .viz-toolbar .stat b { color: var(--accent); }
+
+        canvas {
+            flex: 1;
+            background: var(--bg);
+            display: block;
+        }
+
+        /* Status bar */
+        .status {
+            padding: 6px 16px;
+            border-top: 1px solid var(--border);
+            background: var(--surface);
+            font-size: 11px;
+            color: var(--text-muted);
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .status .ok { color: var(--green); }
+        .status .err { color: var(--red); }
+        .status .warn { color: var(--yellow); }
+
+        /* Loading overlay */
+        .loading {
+            position: fixed;
+            inset: 0;
+            background: rgba(13,17,23,0.9);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            gap: 16px;
+            z-index: 100;
+        }
+
+        .loading.hidden { display: none; }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid var(--border);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+    <div class="loading" id="loading">
+        <div class="spinner"></div>
+        <div>Loading hyburn WASM module...</div>
+    </div>
+
+    <header>
+        <h1>⚡ hyburn</h1>
+        <span>Neural Mass Simulator</span>
+        <span id="wasm-status">loading...</span>
+    </header>
+
+    <main>
+        <div class="config-panel">
+            <h2>Configuration</h2>
+
+            <div class="field">
+                <label>Model</label>
+                <select id="model-select">
+                    <option value="Generic2dOscillator" selected>Generic2dOscillator (G2DO)</option>
+                    <option value="MontbrioPazoRoxin">MontbrioPazoRoxin (MPR)</option>
+                    <option value="Kuramoto">Kuramoto</option>
+                </select>
+            </div>
+
+            <div class="field">
+                <label>Nodes</label>
+                <input type="number" id="nnodes" value="2" min="1" max="200">
+            </div>
+
+            <div class="field">
+                <label>Modes</label>
+                <input type="number" id="nmodes" value="1" min="1" max="10">
+            </div>
+
+            <div class="field">
+                <label>Simulation Length (ms)</label>
+                <input type="number" id="sim-length" value="1000" step="100" min="100">
+            </div>
+
+            <div class="field">
+                <label>Time Step (ms)</label>
+                <input type="number" id="dt" value="0.1" step="0.01" min="0.01">
+            </div>
+
+            <div class="field">
+                <label>Integrator</label>
+                <select id="integrator">
+                    <option value="euler">Euler</option>
+                    <option value="heun" selected>Heun</option>
+                </select>
+            </div>
+
+            <div class="field">
+                <label>Noise (nsig)</label>
+                <input type="number" id="nsig" value="0.0" step="0.01" min="0">
+            </div>
+
+            <div class="field">
+                <label>Speed (steps/frame)</label>
+                <input type="range" id="speed" value="50" min="1" max="1000" step="1">
+                <span id="speed-label">50</span>
+            </div>
+
+            <div class="field">
+                <label>JSON Config (advanced)</label>
+                <textarea id="json-config" placeholder="Paste SimConfig JSON here..."></textarea>
+            </div>
+
+            <div class="btn-group">
+                <button class="btn btn-primary" id="btn-start">▶ Start</button>
+                <button class="btn" id="btn-pause" disabled>⏸ Pause</button>
+                <button class="btn btn-danger" id="btn-reset">⟳ Reset</button>
+            </div>
+
+            <div class="btn-group">
+                <button class="btn" id="btn-load-json">Load JSON</button>
+                <button class="btn" id="btn-validate">Validate</button>
+            </div>
+        </div>
+
+        <div class="viz-panel">
+            <div class="viz-toolbar">
+                <span class="stat">Step: <b id="stat-step">0</b></span>
+                <span class="stat">Time: <b id="stat-time">0.0</b> ms</span>
+                <span class="stat">Trajectory: <b id="stat-traj">0</b> pts</span>
+                <span class="stat">FPS: <b id="stat-fps">0</b></span>
+            </div>
+            <canvas id="canvas"></canvas>
+            <div class="status">
+                <span id="status-msg">Ready</span>
+                <span id="status-engine">No engine</span>
+            </div>
+        </div>
+    </main>
+
+    <script type="module">
+        import init, {
+            WebEngine,
+            validate_config_json,
+            model_registry_json,
+            model_default_params,
+            init_logger,
+        } from './pkg/hyburn.js';
+
+        // ---- State ----
+        let engine = null;
+        let running = false;
+        let animId = null;
+        let stepsPerFrame = 50;
+        let fpsHistory = [];
+        let lastFrameTime = 0;
+
+        // ---- Default params per model ----
+        const DEFAULT_PARAMS = {
+            Generic2dOscillator: [1.0, 0.0, -2.0, -10.0, 0.0, 0.02, 3.0, 1.0, 0.0, 1.0, 1.0, 1.0],
+            MontbrioPazoRoxin: [-5.0, 1.0, 0.0, 0.0, 1.0, -0.5, 1.0],
+            Kuramoto: [1.0],
+        };
+
+        // ---- Build config from UI ----
+        function buildConfig() {
+            const model = document.getElementById('model-select').value;
+            const nnodes = parseInt(document.getElementById('nnodes').value);
+            const nmodes = parseInt(document.getElementById('nmodes').value);
+            const simLength = parseFloat(document.getElementById('sim-length').value);
+            const dt = parseFloat(document.getElementById('dt').value);
+            const integrator = document.getElementById('integrator').value;
+            const nsig = parseFloat(document.getElementById('nsig').value);
+            const params = DEFAULT_PARAMS[model] || [1.0];
+            const nvar = model === 'JansenRit' ? 6 : (model === 'WilsonCowan' || model === 'MontbrioPazoRoxin' || model === 'Generic2dOscillator' ? 2 : 1);
+            const initState = new Array(nvar * nnodes * nmodes).fill(0.0);
+
+            return {
+                sim_length: simLength,
+                dt: dt,
+                integrator: integrator,
+                nsig: nsig,
+                network: {
+                    subnetworks: [{
+                        model: model,
+                        nnodes: nnodes,
+                        nmodes: nmodes,
+                        params: params,
+                        initial_state: initState,
+                    }],
+                    projections: [],
+                },
+            };
+        }
+
+        // ---- Canvas rendering ----
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+
+        function resizeCanvas() {
+            const rect = canvas.parentElement.getBoundingClientRect();
+            canvas.width = rect.width * devicePixelRatio;
+            canvas.height = (rect.height - 60) * devicePixelRatio;
+            canvas.style.width = rect.width + 'px';
+            canvas.style.height = (rect.height - 60) + 'px';
+            ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+        }
+
+        window.addEventListener('resize', resizeCanvas);
+
+        function drawTrajectory(trajF32, nvar, nnodes, nmodes, nSteps) {
+            const w = canvas.width / devicePixelRatio;
+            const h = canvas.height / devicePixelRatio;
+
+            ctx.clearRect(0, 0, w, h);
+
+            if (!trajF32 || trajF32.length === 0) return;
+
+            const traj = trajF32 instanceof Float32Array ? trajF32 : new Float32Array(trajF32);
+            const pointsPerStep = nvar * nnodes * nmodes;
+            const displaySteps = Math.min(nSteps, traj.length / pointsPerStep);
+
+            const margin = { top: 20, right: 20, bottom: 30, left: 50 };
+            const plotW = w - margin.left - margin.right;
+            const plotH = h - margin.top - margin.bottom;
+
+            // Draw grid
+            ctx.strokeStyle = '#30363d';
+            ctx.lineWidth = 0.5;
+            for (let i = 0; i <= 4; i++) {
+                const y = margin.top + (plotH * i / 4);
+                ctx.beginPath();
+                ctx.moveTo(margin.left, y);
+                ctx.lineTo(w - margin.right, y);
+                ctx.stroke();
+            }
+            for (let i = 0; i <= 8; i++) {
+                const x = margin.left + (plotW * i / 8);
+                ctx.beginPath();
+                ctx.moveTo(x, margin.top);
+                ctx.lineTo(x, margin.top + plotH);
+                ctx.stroke();
+            }
+
+            // Colors for variables
+            const colors = ['#58a6ff', '#3fb950', '#f85149', '#d29922', '#bc8cff', '#ff7b72'];
+
+            // Plot each variable for node 0, mode 0
+            for (let v = 0; v < nvar; v++) {
+                ctx.strokeStyle = colors[v % colors.length];
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+
+                // Find min/max for this variable
+                let vmin = Infinity, vmax = -Infinity;
+                for (let t = 0; t < displaySteps; t++) {
+                    const val = traj[t * pointsPerStep + v];
+                    if (val < vmin) vmin = val;
+                    if (val > vmax) vmax = val;
+                }
+                const range = vmax - vmin || 1.0;
+
+                for (let t = 0; t < displaySteps; t++) {
+                    const val = traj[t * pointsPerStep + v];
+                    const x = margin.left + (t / displaySteps) * plotW;
+                    const y = margin.top + plotH - ((val - vmin) / range) * plotH;
+                    if (t === 0) ctx.moveTo(x, y);
+                    else ctx.lineTo(x, y);
+                }
+                ctx.stroke();
+
+                // Label
+                ctx.fillStyle = colors[v % colors.length];
+                ctx.font = '11px monospace';
+                ctx.fillText(`var${v}`, margin.left - 40, margin.top + (v + 1) * 14);
+            }
+
+            // Axis labels
+            ctx.fillStyle = '#8b949e';
+            ctx.font = '11px sans-serif';
+            ctx.fillText('Time (steps)', w / 2 - 30, h - 5);
+        }
+
+        // ---- Animation loop ----
+        function animate(timestamp) {
+            if (!running || !engine) return;
+
+            // FPS tracking
+            if (lastFrameTime > 0) {
+                const dt = timestamp - lastFrameTime;
+                fpsHistory.push(1000 / dt);
+                if (fpsHistory.length > 30) fpsHistory.shift();
+            }
+            lastFrameTime = timestamp;
+
+            // Step simulation
+            engine.step_n(stepsPerFrame);
+
+            // Update stats
+            document.getElementById('stat-step').textContent = engine.current_step();
+            document.getElementById('stat-time').textContent = (engine.current_step() * engine.dt()).toFixed(1);
+            document.getElementById('stat-traj').textContent = engine.trajectory_len();
+
+            const avgFps = fpsHistory.length > 0
+                ? (fpsHistory.reduce((a, b) => a + b, 0) / fpsHistory.length).toFixed(0)
+                : 0;
+            document.getElementById('stat-fps').textContent = avgFps;
+
+            // Render
+            const info = engine.info();
+            const traj = engine.trajectory();
+            drawTrajectory(traj, info.nvar, info.nnodes, info.nmodes, engine.current_step());
+
+            animId = requestAnimationFrame(animate);
+        }
+
+        // ---- Controls ----
+        document.getElementById('btn-start').addEventListener('click', () => {
+            if (running) return;
+
+            try {
+                const jsonCfg = document.getElementById('json-config').value.trim();
+                if (jsonCfg) {
+                    engine = new WebEngine.from_json(jsonCfg);
+                } else {
+                    const cfg = buildConfig();
+                    engine = new WebEngine.from_json(JSON.stringify(cfg));
+                }
+
+                const info = engine.info();
+                document.getElementById('status-engine').textContent =
+                    `${info.nvar}var × ${info.nnodes}nodes × ${info.nmodes}modes | dt=${engine.dt()}`;
+
+                running = true;
+                fpsHistory = [];
+                lastFrameTime = 0;
+                animId = requestAnimationFrame(animate);
+
+                document.getElementById('btn-pause').disabled = false;
+                document.getElementById('status-msg').textContent = 'Running';
+                document.getElementById('status-msg').className = 'ok';
+            } catch (e) {
+                document.getElementById('status-msg').textContent = 'Error: ' + e;
+                document.getElementById('status-msg').className = 'err';
+            }
+        });
+
+        document.getElementById('btn-pause').addEventListener('click', () => {
+            if (!engine) return;
+            running = !running;
+            document.getElementById('btn-pause').textContent = running ? '⏸ Pause' : '▶ Resume';
+            if (running) {
+                lastFrameTime = 0;
+                animId = requestAnimationFrame(animate);
+                document.getElementById('status-msg').textContent = 'Running';
+                document.getElementById('status-msg').className = 'ok';
+            } else {
+                document.getElementById('status-msg').textContent = 'Paused';
+                document.getElementById('status-msg').className = 'warn';
+            }
+        });
+
+        document.getElementById('btn-reset').addEventListener('click', () => {
+            running = false;
+            if (animId) cancelAnimationFrame(animId);
+            engine = null;
+            fpsHistory = [];
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            document.getElementById('stat-step').textContent = '0';
+            document.getElementById('stat-time').textContent = '0.0';
+            document.getElementById('stat-traj').textContent = '0';
+            document.getElementById('stat-fps').textContent = '0';
+            document.getElementById('btn-pause').disabled = true;
+            document.getElementById('btn-pause').textContent = '⏸ Pause';
+            document.getElementById('status-msg').textContent = 'Ready';
+            document.getElementById('status-msg').className = '';
+            document.getElementById('status-engine').textContent = 'No engine';
+        });
+
+        document.getElementById('speed').addEventListener('input', (e) => {
+            stepsPerFrame = parseInt(e.target.value);
+            document.getElementById('speed-label').textContent = stepsPerFrame;
+        });
+
+        document.getElementById('btn-validate').addEventListener('click', () => {
+            const cfg = buildConfig();
+            const err = validate_config_json(JSON.stringify(cfg));
+            if (err === '') {
+                document.getElementById('status-msg').textContent = 'Config valid ✓';
+                document.getElementById('status-msg').className = 'ok';
+            } else {
+                document.getElementById('status-msg').textContent = 'Invalid: ' + err;
+                document.getElementById('status-msg').className = 'err';
+            }
+        });
+
+        document.getElementById('btn-load-json').addEventListener('click', () => {
+            const json = document.getElementById('json-config').value.trim();
+            if (!json) {
+                document.getElementById('status-msg').textContent = 'No JSON in textarea';
+                document.getElementById('status-msg').className = 'warn';
+                return;
+            }
+            const err = validate_config_json(json);
+            if (err === '') {
+                document.getElementById('status-msg').textContent = 'JSON config valid ✓';
+                document.getElementById('status-msg').className = 'ok';
+            } else {
+                document.getElementById('status-msg').textContent = 'Invalid: ' + err;
+                document.getElementById('status-msg').className = 'err';
+            }
+        });
+
+        // ---- Init ----
+        async function main() {
+            try {
+                await init();
+                init_logger();
+                document.getElementById('wasm-status').textContent = 'WASM ✓';
+                document.getElementById('wasm-status').className = 'ok';
+                document.getElementById('loading').classList.add('hidden');
+                resizeCanvas();
+            } catch (e) {
+                document.getElementById('wasm-status').textContent = 'WASM FAILED';
+                document.getElementById('wasm-status').className = 'err';
+                document.getElementById('loading').innerHTML = `<div style="color:#f85149">Failed to load WASM: ${e}</div>`;
+            }
+        }
+
+        main();
+    </script>
+</body>
+</html>

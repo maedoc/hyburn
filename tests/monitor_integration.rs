@@ -1,3 +1,4 @@
+#![cfg(not(target_arch = "wasm32"))]
 use burn::backend::ndarray::NdArray;
 use burn::tensor::{Tensor, TensorData};
 use hyburn::engine::monitor::{Monitor, RawMonitor, TemporalAverageMonitor};

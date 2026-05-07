@@ -18,6 +18,6 @@ pub mod engine;
 pub(crate) mod dfun;
 pub(crate) mod projection;
 
-pub use engine::{
-    BatchHybridEngine, BatchSweepResult, SweepParam, rayon_batch_sweep,
-};
+pub use engine::{BatchHybridEngine, BatchSweepResult, SweepParam};
+#[cfg(feature = "parallel")]
+pub use engine::rayon_batch_sweep;
