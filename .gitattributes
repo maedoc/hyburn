@@ -1,0 +1,2 @@
+ref/**/*.npy filter=lfs diff=lfs merge=lfs -text
+ref/**/*.npz filter=lfs diff=lfs merge=lfs -text
