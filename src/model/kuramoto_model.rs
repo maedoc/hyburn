@@ -31,8 +31,10 @@ impl<B: Backend> NeuralMassModel<B> for Kuramoto {
         result3.squeeze::<2>(0)
     }
 
-    fn clamp(_state: &mut Tensor<B, 2>) {
-        // No explicit boundary clamping for Kuramoto
+    fn clamp(state: &mut Tensor<B, 2>) {
+        // Phase normalization: wrap θ into [0, 2π) to prevent precision loss
+        let two_pi = 2.0 * std::f32::consts::PI;
+        *state = state.clone() - (state.clone() / two_pi).floor() * two_pi;
     }
 }
 

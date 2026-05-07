@@ -149,6 +149,11 @@ pub fn dense_coupling<B: Backend>(
     delayed_state: Tensor<B, 2>,
     coupling_fn: &dyn CouplingFn<B>,
 ) -> Tensor<B, 2> {
+    debug_assert!(
+        weights.shape().dims[1] == delayed_state.shape().dims[0],
+        "dense_coupling: weights cols ({}) must match delayed_state rows ({})",
+        weights.shape().dims[1], delayed_state.shape().dims[0]
+    );
     let pre = coupling_fn.apply(delayed_state);
     weights.matmul(pre)
 }

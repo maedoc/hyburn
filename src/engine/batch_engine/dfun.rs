@@ -81,7 +81,13 @@ pub fn clamp_batch<B: Backend>(model: &EngineModel<B>, state: &mut Tensor<B, 3>)
             let s = state.clone().narrow(2, 0, 1).clamp(0.0, 1.0);
             *state = s;
         }
-        // G2DO, JansenRit, Kuramoto, others: no-op clamp
+        EngineModel::Kuramoto { .. } => {
+            // Phase normalization: wrap θ into [0, 2π) to prevent floating-point
+            // precision loss as phases drift to large magnitudes.
+            let two_pi = 2.0 * std::f32::consts::PI;
+            *state = state.clone() - (state.clone() / two_pi).floor() * two_pi;
+        }
+        // G2DO, JansenRit, others: no-op clamp
         _ => {}
     }
 }
@@ -122,6 +128,8 @@ pub fn g2do_dfun_batch<B: Backend>(
     i_ext_sweep: Option<&Tensor<B, 3>>, // [n_sweep, 1, 1] per-sweep, or None for scalar
 ) -> Tensor<B, 3> {
     let tau_g = params[0];
+    debug_assert!(tau_g > 0.0, "G2DO tau must be positive, got {}", tau_g);
+    let tau_g = tau_g.max(f32::EPSILON); // guard against division by zero
     let a_g = params[2];
     let b_g = params[3];
     let c_g = params[4];
@@ -236,6 +244,10 @@ pub fn wilson_cowan_dfun_batch<B: Backend>(
 ) -> Tensor<B, 3> {
     let c_ee = params[0]; let c_ei = params[1]; let c_ie = params[2]; let c_ii = params[3];
     let tau_e = params[4]; let tau_i = params[5];
+    debug_assert!(tau_e > 0.0, "WilsonCowan tau_e must be positive, got {}", tau_e);
+    debug_assert!(tau_i > 0.0, "WilsonCowan tau_i must be positive, got {}", tau_i);
+    let tau_e = tau_e.max(f32::EPSILON); // guard against division by zero
+    let tau_i = tau_i.max(f32::EPSILON);
     let a_e = params[6]; let b_e = params[7]; let ce = params[8]; let theta_e = params[9];
     let a_i = params[10]; let b_i = params[11]; let ci = params[12]; let theta_i = params[13];
     let r_e = params[14]; let r_i = params[15]; let k_e = params[16]; let k_i = params[17];
@@ -283,7 +295,9 @@ pub fn mpr_dfun_batch<B: Backend>(
     params: &[f32],
     i_ext_sweep: Option<&Tensor<B, 3>>,
 ) -> Tensor<B, 3> {
-    let tau = params[0]; let delta = params[1]; let eta = params[2];
+    let tau = params[0]; debug_assert!(tau > 0.0, "MPR tau must be positive, got {}", tau);
+    let tau = tau.max(f32::EPSILON); // guard against division by zero
+    let delta = params[1]; let eta = params[2];
     let j = params[3]; let i_ext = params[4]; let cr = params[5]; let cv = params[6];
     let r = state.clone().narrow(2, 0, 1);
     let v = state.clone().narrow(2, 1, 1);

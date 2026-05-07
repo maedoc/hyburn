@@ -77,6 +77,7 @@ serde_json = "1"
 default = []
 wgpu = ["dep:burn-wgpu"]
 cuda = ["dep:burn-cuda"]
+# diagnostics = ["dep:plotters"]  -- planned: gate plotters/report behind feature flag
 
 [profile.release]
 opt-level = 3

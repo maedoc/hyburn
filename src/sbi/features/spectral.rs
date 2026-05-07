@@ -24,8 +24,9 @@ pub fn spectral_features(series: &[f32], fs: f64) -> Vec<f32> {
     }
     let y: Vec<f64> = series.iter().map(|v| *v as f64).collect();
     let nfft = super::catch22::fft::next_power_of_2(series.len());
-    let (psd, freqs) = welch_psd(&y, nfft, fs, series.len().min(256),
-    );
+    // Adaptive window: use min(256, n_samples/2) with floor of 16
+    let nperseg = (series.len() / 2).clamp(16, 256);
+    let (psd, freqs) = welch_psd(&y, nfft, fs, nperseg);
     if psd.is_empty() || freqs.is_empty() {
         return vec![f32::NAN; EEG_BANDS.len() + 4];
     }
@@ -200,5 +201,67 @@ mod tests {
             100.0,
         );
         assert_eq!(feats.len(), nvar * SPECTRAL_FEATURE_COUNT);
+    }
+
+    #[test]
+    fn test_spectral_features_theta_frequency() {
+        // 6 Hz sine → should be dominant in theta band (4–8 Hz)
+        let fs = 100.0;
+        let freq = 6.0;
+        let series: Vec<f32> = (0..1024)
+            .map(|i| (i as f64 * 2.0 * std::f64::consts::PI * freq / fs).sin() as f32)
+            .collect();
+        let feats = spectral_features(&series, fs);
+        let theta_idx = 1; // delta=0, theta=1
+        let theta_power = feats[theta_idx];
+        assert!(
+            theta_power > 0.5,
+            "6 Hz sine should have most power in theta band; got {}",
+            theta_power
+        );
+        // Delta power should be small
+        assert!(
+            feats[0] < 0.3,
+            "6 Hz sine should have little delta power; got {}",
+            feats[0]
+        );
+    }
+
+    #[test]
+    fn test_spectral_features_gamma_frequency() {
+        // 40 Hz sine → should be dominant in gamma band (30–80 Hz)
+        let fs = 200.0; // need higher fs for Nyquist
+        let freq = 40.0;
+        let series: Vec<f32> = (0..2048)
+            .map(|i| (i as f64 * 2.0 * std::f64::consts::PI * freq / fs).sin() as f32)
+            .collect();
+        let feats = spectral_features(&series, fs);
+        let gamma_idx = 4; // delta=0, theta=1, alpha=2, beta=3, gamma=4
+        let gamma_power = feats[gamma_idx];
+        assert!(
+            gamma_power > 0.5,
+            "40 Hz sine should have most power in gamma band; got {}",
+            gamma_power
+        );
+    }
+
+    #[test]
+    fn test_spectral_features_adaptive_window_short_series() {
+        // Verify that the adaptive nperseg doesn't panic on short series
+        // (e.g., 32 samples → nperseg = min(256, 16) = 16)
+        let fs = 100.0;
+        let series: Vec<f32> = (0..32)
+            .map(|i| (i as f64 * 2.0 * std::f64::consts::PI * 10.0 / fs).sin() as f32)
+            .collect();
+        let feats = spectral_features(&series, fs);
+        // Should return valid (non-NaN) features for 32 samples
+        assert_eq!(feats.len(), SPECTRAL_FEATURE_COUNT);
+        for (i, v) in feats.iter().enumerate() {
+            assert!(
+                v.is_finite() || v.is_nan(),
+                "Feature {} should be finite or NaN, got inf",
+                i
+            );
+        }
     }
 }

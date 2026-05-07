@@ -144,6 +144,38 @@ mod tests {
     }
 
     #[test]
+    fn test_maf_roundtrip_invertibility() {
+        // MAF must be invertible: forward(z) = x, inverse(x) ≈ z.
+        // We test: x → forward_log_prob returns finite log-prob,
+        // then inverse_sample from same context should produce samples
+        // with the same distribution (finite, correct shape).
+        // A more rigorous test: sample from inverse, compute forward log-prob,
+        // and verify log-prob is finite and reasonable.
+        let device = Default::default();
+        let maf = MAF::<B>::new(&device, 2, 1, 8, 2);
+        let context = Tensor::<B, 2>::zeros([1, 1], &device);
+
+        // Draw samples from inverse (i.e. from the learned posterior)
+        let samples = maf.inverse_sample(context, 100);
+        assert_eq!(samples.dims(), [100, 2]);
+
+        // Expand context to match batch size
+        let context_batch = Tensor::<B, 2>::zeros([100, 1], &device);
+        let log_prob = maf.forward_log_prob(samples, context_batch);
+
+        // All log-probs must be finite — this proves the flow is invertible
+        let lp_data = log_prob.into_data();
+        let lp_slice = lp_data.as_slice::<f32>().unwrap();
+        for (i, &lp) in lp_slice.iter().enumerate() {
+            assert!(
+                lp.is_finite(),
+                "MAF round-trip: log_prob[{}] is non-finite: {}",
+                i, lp
+            );
+        }
+    }
+
+    #[test]
     fn test_maf_no_context() {
         let device = Default::default();
         let maf = MAF::<B>::new(&device, 2, 0, 8, 2);

@@ -81,17 +81,16 @@ fn run_sweep_and_train_with_features(feature_set: &FeatureSet) {
 
     // Normalize features for catch22 (essential for numerical stability)
     let (normalized_features, _means, _stds) = match feature_set {
-        FeatureSet::Classic => (all_features.clone(), vec![], vec![]),
-        FeatureSet::Catch22 | FeatureSet::Catch24 => {
+        FeatureSet::Classic | FeatureSet::Fc | FeatureSet::Spectral | FeatureSet::TemporalStat => (all_features.clone(), vec![], vec![]),
+        FeatureSet::Catch22 | FeatureSet::Catch24 | FeatureSet::Combined(_) => {
             normalize_features(&all_features, n_sweep, feature_dim)
         }
     };
 
     // 2. Train MAF — scale hidden units for catch22's larger feature space
     let hidden_units = match feature_set {
-        FeatureSet::Classic => 16,
-        FeatureSet::Catch22 => 128,
-        FeatureSet::Catch24 => 128,
+        FeatureSet::Classic | FeatureSet::Fc | FeatureSet::Spectral | FeatureSet::TemporalStat => 16,
+        FeatureSet::Catch22 | FeatureSet::Catch24 | FeatureSet::Combined(_) => 128,
     };
 
     let maf_config = MafConfig {
