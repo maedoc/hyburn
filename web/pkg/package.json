@@ -1,0 +1,16 @@
+{
+  "name": "hyburn",
+  "type": "module",
+  "description": "Burn-based GPU hybrid neural mass simulator with SBI",
+  "version": "0.1.0",
+  "files": [
+    "hyburn_bg.wasm",
+    "hyburn.js",
+    "hyburn.d.ts"
+  ],
+  "main": "hyburn.js",
+  "types": "hyburn.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}

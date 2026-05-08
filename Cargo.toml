@@ -7,45 +7,54 @@ description = "Burn-based GPU hybrid neural mass simulator with SBI"
 [[bin]]
 name = "hyburn"
 path = "src/main.rs"
+required-features = ["cli"]
 
 [[bin]]
 name = "hyburn-bench-realistic"
+required-features = ["cli"]
 path = "src/bin/hyburn_bench_realistic.rs"
 
 [[bin]]
 name = "hyburn-validate-batch"
+required-features = ["cli"]
 path = "src/bin/hyburn_validate_batch.rs"
 
 [[bin]]
 name = "hyburn-validate-accuracy"
+required-features = ["cli"]
 path = "src/bin/hyburn_validate_accuracy.rs"
 
 [[bin]]
 name = "hyburn-bench-generic-cuda"
+required-features = ["cli"]
 path = "src/bin/hyburn_bench_generic_cuda.rs"
 
 [[bin]]
 name = "hyburn-bench-batch-sweep"
+required-features = ["cli"]
 path = "src/bin/hyburn_bench_batch_sweep.rs"
 
 [[bin]]
 name = "hyburn-bench-gpu"
 path = "src/bin/hyburn_bench_gpu.rs"
+required-features = ["cli"]
 
 [[bin]]
 name = "hyburn-bench-gpu-mini"
+required-features = ["cli"]
 path = "src/bin/hyburn_bench_gpu_mini.rs"
 
 [dependencies]
-# Burn framework
-burn = { version = "0.16", features = ["std", "train", "ndarray"] }
-burn-wgpu = { version = "0.16", optional = true, features = ["template"] }
-burn-cuda = { version = "0.16", optional = true }
+# Burn framework — core (no 'train' feature by default; 'train' pulls in burn-dataset
+# which has native-only deps like signal-hook/errno that don't compile to WASM).
+burn = { version = "0.16", features = ["std", "autodiff", "ndarray"] }
 burn-ndarray = "0.16"
 burn-autodiff = "0.16"
+burn-wgpu = { version = "0.16", optional = true, features = ["template"] }
+burn-cuda = { version = "0.16", optional = true }
 
-# CLI
-clap = { version = "4", features = ["derive"] }
+# CLI (native only)
+clap = { version = "4", features = ["derive"], optional = true }
 
 # Config
 serde = { version = "1", features = ["derive"] }
@@ -53,6 +62,7 @@ toml = "0.8"
 
 # IO
 ndarray = "0.15"
+serde_json = "1"
 
 # Math / RNG
 rand = "0.8"
@@ -60,26 +70,51 @@ rand_distr = "0.4"
 
 # Logging
 log = "0.4"
-env_logger = "0.11"
+env_logger = { version = "0.11", optional = true }
 
 # Error handling
 thiserror = "2"
 anyhow = "1"
-plotters = { version = "0.3", default-features = false, features = ["svg_backend", "line_series", "errorbar", "point_series"] }
-rayon = "1.12.0"
+
+# Plotting (native only, for HTML report generation)
+plotters = { version = "0.3", default-features = false, features = ["svg_backend", "line_series", "errorbar", "point_series"], optional = true }
+
+# Parallelism (native only)
+rayon = { version = "1.12.0", optional = true }
+
+# WASM dependencies
+wasm-bindgen = { version = "0.2", optional = true }
+js-sys = { version = "0.3", optional = true }
+web-sys = { version = "0.3", optional = true }
+console_log = { version = "1", optional = true }
+getrandom = { version = "0.2", features = ["js"], optional = true }
 
 [dev-dependencies]
 approx = "0.5"
 tempfile = "3"
-serde_json = "1"
+wasm-bindgen-test = { version = "0.3" }
 
 [features]
-default = []
+default = ["cli", "report", "parallel"]
 wgpu = ["dep:burn-wgpu"]
 cuda = ["dep:burn-cuda"]
-# diagnostics = ["dep:plotters"]  -- planned: gate plotters/report behind feature flag
+cli = ["dep:clap", "dep:env_logger", "dep:rayon"]
+report = ["dep:plotters"]
+parallel = ["dep:rayon"]
+# WASM feature: enables browser-compatible APIs and disables native-only code.
+# Use: cargo build --target wasm32-unknown-unknown --no-default-features --features wasm
+wasm = ["dep:wasm-bindgen", "dep:js-sys", "dep:web-sys", "dep:console_log", "dep:getrandom"]
+
+[lib]
+crate-type = ["lib", "cdylib"]
 
 [profile.release]
 opt-level = 3
 lto = true
 codegen-units = 1
+
+[profile.release.package."*"]
+opt-level = 3
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = ["-O4"]

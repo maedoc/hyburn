@@ -88,6 +88,10 @@ pub enum InitialStateConfig {
     Inline(Vec<f32>),
     /// Path to a .npy file containing initial state tensor.
     NpyPath(String),
+    /// In-memory tensor data with shape (for WASM / programmatic construction).
+    /// Not intended for TOML deserialization — use `Inline` or `NpyPath` in config files.
+    #[serde(skip)]
+    Memory { data: Vec<f32>, shape: Vec<usize> },
 }
 
 /// A coupling projection between subnetworks.
@@ -170,10 +174,26 @@ pub struct StimulusConfig {
 
 impl SimConfig {
     /// Load a SimConfig from a TOML file path.
+    /// Not available in WASM builds.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn from_file(path: &str) -> Result<Self> {
         let content = std::fs::read_to_string(path)?;
         let cfg: SimConfig = toml::from_str(&content)
             .map_err(|e| SimulationError::InvalidConfig(format!("TOML parse error: {}", e)))?;
+        Ok(cfg)
+    }
+
+    /// Load a SimConfig from a TOML string.
+    pub fn from_toml_str(s: &str) -> Result<Self> {
+        let cfg: SimConfig = toml::from_str(s)
+            .map_err(|e| SimulationError::InvalidConfig(format!("TOML parse error: {}", e)))?;
+        Ok(cfg)
+    }
+
+    /// Load a SimConfig from a JSON string.
+    pub fn from_json_str(s: &str) -> Result<Self> {
+        let cfg: SimConfig = serde_json::from_str(s)
+            .map_err(|e| SimulationError::InvalidConfig(format!("JSON parse error: {}", e)))?;
         Ok(cfg)
     }
 
@@ -208,13 +228,33 @@ impl SimConfig {
                     i, sub.model, expected_nparams, sub.params.len()
                 )));
             }
-            if let InitialStateConfig::Inline(vals) = &sub.initial_state {
-                let expected = expected_nvar * sub.nnodes * sub.nmodes;
-                if vals.len() != expected {
-                    return Err(SimulationError::InvalidConfig(format!(
-                        "Subnetwork {}: initial_state has {} values, expected {} (nvar={} * nnodes={} * nmodes={})",
-                        i, vals.len(), expected, expected_nvar, sub.nnodes, sub.nmodes
-                    )));
+            match &sub.initial_state {
+                InitialStateConfig::Inline(vals) => {
+                    let expected = expected_nvar * sub.nnodes * sub.nmodes;
+                    if vals.len() != expected {
+                        return Err(SimulationError::InvalidConfig(format!(
+                            "Subnetwork {}: initial_state has {} values, expected {} (nvar={} * nnodes={} * nmodes={})",
+                            i, vals.len(), expected, expected_nvar, sub.nnodes, sub.nmodes
+                        )));
+                    }
+                }
+                InitialStateConfig::Memory { data, shape } => {
+                    let expected = expected_nvar * sub.nnodes * sub.nmodes;
+                    if data.len() != expected {
+                        return Err(SimulationError::InvalidConfig(format!(
+                            "Subnetwork {}: Memory initial_state has {} values, expected {}",
+                            i, data.len(), expected
+                        )));
+                    }
+                    if shape.len() != 3 {
+                        return Err(SimulationError::InvalidConfig(format!(
+                            "Subnetwork {}: Memory initial_state shape has {} dims, expected 3",
+                            i, shape.len()
+                        )));
+                    }
+                }
+                InitialStateConfig::NpyPath(_) => {
+                    // Cannot validate NPY file contents without reading the file
                 }
             }
             // nvar/ncvar implicitly match when model is recognised; we just check sizes above.
@@ -312,6 +352,8 @@ pub struct SweepRange {
 
 impl SweepConfig {
     /// Load a SweepConfig from a TOML file path.
+    /// Not available in WASM builds.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn from_file(path: &str) -> Result<Self> {
         let content = std::fs::read_to_string(path)?;
         let cfg: SweepConfig = toml::from_str(&content)

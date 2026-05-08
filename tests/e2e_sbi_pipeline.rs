@@ -1,3 +1,4 @@
+#![cfg(not(target_arch = "wasm32"))]
 use burn::backend::autodiff::Autodiff;
 use burn::backend::ndarray::NdArray;
 use burn::tensor::{Tensor, TensorData};

@@ -1,3 +1,4 @@
+#![cfg(not(target_arch = "wasm32"))]
 //! End-to-end integration test for hyburn.
 //!
 //! Loads a TOML config from a string, runs a short G2DO simulation,

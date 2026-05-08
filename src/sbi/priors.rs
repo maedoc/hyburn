@@ -80,21 +80,29 @@ impl PriorDistribution {
                 Ok((samples, priors.clone()))
             }
             PriorDistribution::SamplesFromNpy { path } => {
-                let (data, shape) = crate::io::read_npy_f32(path)?;
-                let n_file = shape[0];
-                let param_dim = shape[1];
-                let mut samples = Vec::with_capacity(n * param_dim);
-                let priors: Vec<ParamPrior> = (0..param_dim)
-                    .map(|i| ParamPrior::new(format!("param_{}", i), f32::NEG_INFINITY, f32::INFINITY))
-                    .collect();
-                if n > n_file {
-                    anyhow::bail!("Requested {} samples but NPY file only has {}", n, n_file);
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let (data, shape) = crate::io::read_npy_f32(path)?;
+                    let n_file = shape[0];
+                    let param_dim = shape[1];
+                    let mut samples = Vec::with_capacity(n * param_dim);
+                    let priors: Vec<ParamPrior> = (0..param_dim)
+                        .map(|i| ParamPrior::new(format!("param_{}", i), f32::NEG_INFINITY, f32::INFINITY))
+                        .collect();
+                    if n > n_file {
+                        anyhow::bail!("Requested {} samples but NPY file only has {}", n, n_file);
+                    }
+                    for i in 0..n {
+                        let start = i * param_dim;
+                        samples.extend_from_slice(&data[start..start + param_dim]);
+                    }
+                    Ok((samples, priors))
                 }
-                for i in 0..n {
-                    let start = i * param_dim;
-                    samples.extend_from_slice(&data[start..start + param_dim]);
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let _ = path;
+                    anyhow::bail!("SamplesFromNpy is not supported in WASM");
                 }
-                Ok((samples, priors))
             }
             PriorDistribution::MultivariateNormal { means, stds } => {
                 let mut samples = Vec::with_capacity(n * means.len());
@@ -126,9 +134,15 @@ pub struct PriorConfig {
 }
 
 impl PriorConfig {
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn from_file(path: &str) -> anyhow::Result<Self> {
         let content = std::fs::read_to_string(path)?;
         let cfg: Self = toml::from_str(&content)?;
+        Ok(cfg)
+    }
+
+    pub fn from_toml_str(s: &str) -> anyhow::Result<Self> {
+        let cfg: Self = toml::from_str(s)?;
         Ok(cfg)
     }
 

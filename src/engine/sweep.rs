@@ -7,6 +7,7 @@
 use burn::prelude::Backend;
 use burn::tensor::{Tensor, TensorData};
 
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 use crate::config::SimConfig;
@@ -66,6 +67,7 @@ impl Default for SweepConfig {
 /// value from `param_values`.
 ///
 /// Returns results in the same order as `param_values`.
+#[cfg(feature = "parallel")]
 pub fn parallel_sweep<B: Backend>(config: &SweepConfig, device: B::Device) -> Vec<SweepResult> {
     let _nvar = 2;
     let _nmodes = 1;
@@ -214,6 +216,7 @@ pub fn serial_sweep<B: Backend>(config: &SweepConfig, device: B::Device) -> Vec<
 }
 
 /// Run a parallel sweep using a SimConfig (for coupled networks, projections, etc.).
+#[cfg(feature = "parallel")]
 pub fn parallel_sweep_from_config<B: Backend>(
     base_config: SimConfig,
     param_name: &str,
@@ -294,6 +297,7 @@ mod tests {
 
     type B = NdArray<f32>;
 
+    #[cfg(feature = "parallel")]
     #[test]
     fn test_parallel_sweep_matches_serial() {
         let device: <B as burn::tensor::backend::Backend>::Device = Default::default();
@@ -325,6 +329,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "parallel")]
     #[test]
     fn test_parallel_sweep_produces_different_trajectories() {
         let device: <B as burn::tensor::backend::Backend>::Device = Default::default();

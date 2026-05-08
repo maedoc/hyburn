@@ -13,17 +13,23 @@ pub mod subnetwork;
 pub mod sweep;
 pub mod sweep_gpu;
 
-pub use batch_engine::{BatchHybridEngine, BatchSweepResult, SweepParam, rayon_batch_sweep};
+pub use batch_engine::{BatchHybridEngine, BatchSweepResult, SweepParam};
+#[cfg(feature = "parallel")]
+pub use batch_engine::rayon_batch_sweep;
 pub use monitor::{
     Monitor, RawMonitor, TemporalAverageMonitor, SubSampleMonitor,
     GlobalAverageMonitor, AfferentCouplingMonitor, ProjectionMonitor,
 };
 pub use bold_monitor::BoldMonitor;
-pub use sweep::{parallel_sweep, serial_sweep, SweepConfig, SweepResult};
+pub use sweep::{serial_sweep, SweepConfig, SweepResult};
+#[cfg(feature = "parallel")]
+pub use sweep::parallel_sweep;
 
 use burn::prelude::Backend;
 use burn::tensor::{Tensor, TensorData};
-use crate::io::{ndarray_to_tensor, read_npy_f32, tensor_to_flat_f32};
+use crate::io::{ndarray_to_tensor, tensor_to_flat_f32};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::io::read_npy_f32;
 use crate::config::{InitialStateConfig, SimConfig};
 use crate::model::{NeuralMassModel, g2do::Generic2dOscillator, mpr::MontbrioPazoRoxin, rww::ReducedWongWang, kuramoto_model::Kuramoto, jansen_rit::JansenRit, wilson_cowan::WilsonCowan};
 use crate::error::{Result, SimulationError};
@@ -290,17 +296,30 @@ impl<B: Backend> HybridEngine<B> {
                     )
                 }
                 InitialStateConfig::NpyPath(path) => {
-                    let (data, shape) = read_npy_f32(path)?;
-                    if shape.len() == 3 {
-                        ndarray_to_tensor::<B, 3>(data, shape, &device)
-                    } else if shape.len() == 2 && sub_cfg.nmodes == 1 {
-                        ndarray_to_tensor::<B, 3>(data, vec![shape[0], shape[1], 1], &device)
-                    } else {
-                        return Err(SimulationError::InvalidState(format!(
-                            "Initial state NPY has {} dims, expected 3 (or 2 when nmodes=1)",
-                            shape.len()
-                        )));
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        let (data, shape) = read_npy_f32(path)?;
+                        if shape.len() == 3 {
+                            ndarray_to_tensor::<B, 3>(data, shape, &device)
+                        } else if shape.len() == 2 && sub_cfg.nmodes == 1 {
+                            ndarray_to_tensor::<B, 3>(data, vec![shape[0], shape[1], 1], &device)
+                        } else {
+                            return Err(SimulationError::InvalidState(format!(
+                                "Initial state NPY has {} dims, expected 3 (or 2 when nmodes=1)",
+                                shape.len()
+                            )));
+                        }
                     }
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        let _ = path;
+                        return Err(SimulationError::InvalidState(
+                            "NPY file loading not supported in WASM. Use Inline or Memory initial_state.".into()
+                        ));
+                    }
+                }
+                InitialStateConfig::Memory { data, shape } => {
+                    ndarray_to_tensor::<B, 3>(data.clone(), shape.clone(), &device)
                 }
             };
 
@@ -902,6 +921,8 @@ impl<B: Backend> HybridEngine<B> {
 
     /// Save the current engine state to a checkpoint `.bin` file.
     ///
+    /// Not available in WASM builds (no filesystem access).
+    ///
     /// The binary format is:
     /// - 8 bytes magic (`HYBURNCK`)
     /// - 8 bytes version (u64 LE)
@@ -912,6 +933,7 @@ impl<B: Backend> HybridEngine<B> {
     /// - 8 bytes number of subnetworks (u64 LE)
     /// - Per subnetwork: 8 bytes nvar, 8 bytes nnodes, 8 bytes nmodes (u64 LE)
     /// - Concatenated flat f32 LE state data for all subnetworks.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn checkpoint(&self, path: &str) -> Result<()> {
         use std::io::Write;
 
@@ -957,8 +979,11 @@ impl<B: Backend> HybridEngine<B> {
 
     /// Resume engine state from a checkpoint file.
     ///
+    /// Not available in WASM builds (no filesystem access).
+    ///
     /// Verifies that the subnetwork shapes match the checkpoint metadata,
     /// then restores `step`, `dt`, `integrator`, `nsig`, and all states.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn resume(&mut self, path: &str) -> Result<()> {
         use std::io::Read;
 
@@ -1130,6 +1155,7 @@ mod tests {
         }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn test_checkpoint_roundtrip() {
         let nnodes = 2;

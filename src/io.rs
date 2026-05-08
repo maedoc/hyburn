@@ -3,9 +3,13 @@
 //! Implements a minimal NPY reader/writer to avoid ndarray version conflicts
 //! with burn's internal ndarray dependency. The format is simple:
 //! magic + header + raw f32 data.
+//!
+//! File I/O functions (read_npy_f32, write_npy_f32) are not available in WASM builds.
+//! Pure tensor conversion functions (ndarray_to_tensor, tensor_to_flat_f32) work everywhere.
 
 use burn::prelude::Backend;
 use burn::tensor::{Tensor, TensorData};
+#[cfg(not(target_arch = "wasm32"))]
 use std::io::{Read, Write};
 use std::path::Path;
 use crate::error::{Result, SimulationError};
@@ -16,6 +20,8 @@ const NPY_MAGIC: &[u8; 6] = b"\x93NUMPY";
 /// Read a `.npy` file into a `Vec<f32>` + shape.
 ///
 /// Supports little-endian float32 arrays (the common case from NumPy).
+/// Not available in WASM builds (no filesystem access).
+#[cfg(not(target_arch = "wasm32"))]
 pub fn read_npy_f32<P: AsRef<Path>>(path: P) -> Result<(Vec<f32>, Vec<usize>)> {
     let mut buf = Vec::new();
     let mut f = std::fs::File::open(path.as_ref())?;
@@ -77,6 +83,8 @@ pub fn read_npy_f32<P: AsRef<Path>>(path: P) -> Result<(Vec<f32>, Vec<usize>)> {
 }
 
 /// Write a flat f32 array + shape to a `.npy` file.
+/// Not available in WASM builds (no filesystem access).
+#[cfg(not(target_arch = "wasm32"))]
 pub fn write_npy_f32<P: AsRef<Path>>(path: P, data: &[f32], shape: &[usize]) -> Result<()> {
     let mut f = std::fs::File::create(path.as_ref())?;
 
@@ -191,6 +199,7 @@ mod tests {
 
     type B = NdArray<f32>;
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn test_npy_roundtrip() {
         let dir = tempdir().unwrap();

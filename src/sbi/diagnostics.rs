@@ -6,7 +6,7 @@
 //! - sbi Python library: sbi.diagnostics and sbi.analysis
 
 /// Result of SBI diagnostic evaluation across multiple test points.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct SbiDiagnostics {
     /// Per-parameter z-scores: |posterior_mean - true_param| / prior_std
     pub z_scores: Vec<f32>,

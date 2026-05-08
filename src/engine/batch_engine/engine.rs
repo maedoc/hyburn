@@ -107,52 +107,70 @@ impl<B: Backend> BatchHybridEngine<B> {
                     batch
                 }
                 InitialStateConfig::NpyPath(path) => {
-                    let (data, shape) = crate::io::read_npy_f32(path)
-                        .map_err(|e| format!("Failed to read initial state NPY: {:?}", e))?;
-                    // NPY can be 2D [nvar, nnodes] or 3D [nvar, nnodes, nmodes]
-                    // We need flat order: [nnodes*nmodes, nvar] in row-major
-                    let single: Vec<f32> = if shape.len() == 2 {
-                        // [nvar, nnodes] → transpose to [nnodes, nvar] → flatten
-                        let nvar_s = shape[0];
-                        let nnodes_s = shape[1];
-                        let mut transposed = vec![0.0f32; nnodes_s * nvar_s];
-                        for n in 0..nnodes_s {
-                            for v in 0..nvar_s {
-                                transposed[n * nvar_s + v] = data[v * nnodes_s + n];
-                            }
-                        }
-                        if nmodes > 1 {
-                            // Replicate across modes
-                            let mut replicated = Vec::with_capacity(nnodes * nmodes * nvar_s);
-                            for _m in 0..nmodes {
-                                replicated.extend_from_slice(&transposed);
-                            }
-                            replicated
-                        } else {
-                            transposed
-                        }
-                    } else if shape.len() == 3 {
-                        // [nvar, nnodes, nmodes] → [nnodes*nmodes, nvar] flatten
-                        let nvar_s = shape[0];
-                        let nnodes_s = shape[1];
-                        let nmodes_s = shape[2];
-                        let mut transposed = vec![0.0f32; nnodes_s * nmodes_s * nvar_s];
-                        for m in 0..nmodes_s {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        let (data, shape) = crate::io::read_npy_f32(path)
+                            .map_err(|e| format!("Failed to read initial state NPY: {:?}", e))?;
+                        // NPY can be 2D [nvar, nnodes] or 3D [nvar, nnodes, nmodes]
+                        // We need flat order: [nnodes*nmodes, nvar] in row-major
+                        let single: Vec<f32> = if shape.len() == 2 {
+                            // [nvar, nnodes] → transpose to [nnodes, nvar] → flatten
+                            let nvar_s = shape[0];
+                            let nnodes_s = shape[1];
+                            let mut transposed = vec![0.0f32; nnodes_s * nvar_s];
                             for n in 0..nnodes_s {
                                 for v in 0..nvar_s {
-                                    transposed[(n * nmodes_s + m) * nvar_s + v] =
-                                        data[(v * nnodes_s + n) * nmodes_s + m];
+                                    transposed[n * nvar_s + v] = data[v * nnodes_s + n];
                                 }
                             }
+                            if nmodes > 1 {
+                                // Replicate across modes
+                                let mut replicated = Vec::with_capacity(nnodes * nmodes * nvar_s);
+                                for _m in 0..nmodes {
+                                    replicated.extend_from_slice(&transposed);
+                                }
+                                replicated
+                            } else {
+                                transposed
+                            }
+                        } else if shape.len() == 3 {
+                            // [nvar, nnodes, nmodes] → [nnodes*nmodes, nvar] flatten
+                            let nvar_s = shape[0];
+                            let nnodes_s = shape[1];
+                            let nmodes_s = shape[2];
+                            let mut transposed = vec![0.0f32; nnodes_s * nmodes_s * nvar_s];
+                            for m in 0..nmodes_s {
+                                for n in 0..nnodes_s {
+                                    for v in 0..nvar_s {
+                                        transposed[(n * nmodes_s + m) * nvar_s + v] =
+                                            data[(v * nnodes_s * n) * nmodes_s + m];
+                                    }
+                                }
+                            }
+                            transposed
+                        } else {
+                            return Err(format!(
+                                "Initial state NPY has {} dims, expected 2 or 3",
+                                shape.len()
+                            ));
+                        };
+                        // Replicate across sweep points
+                        let mut batch = Vec::with_capacity(n_sweep * single.len());
+                        for _ in 0..n_sweep {
+                            batch.extend_from_slice(&single);
                         }
-                        transposed
-                    } else {
-                        return Err(format!(
-                            "Initial state NPY has {} dims, expected 2 or 3",
-                            shape.len()
-                        ));
-                    };
-                    // Replicate across sweep points
+                        batch
+                    }
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        let _ = path;
+                        return Err("NPY file loading not supported in WASM".to_string());
+                    }
+                }
+                InitialStateConfig::Memory { data, shape } => {
+                    // In-memory initial state: replicate across sweep points
+                    let single = data.clone();
+                    let _ = shape; // shape is implied by data layout matching the engine's expectations
                     let mut batch = Vec::with_capacity(n_sweep * single.len());
                     for _ in 0..n_sweep {
                         batch.extend_from_slice(&single);
@@ -572,6 +590,7 @@ impl<B: Backend> BatchHybridEngine<B> {
     }
 }
 
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 /// Shard a large batch sweep across Rayon threads.
@@ -583,6 +602,7 @@ use rayon::prelude::*;
 /// still saturating CPU cores. On a GPU backend `B` it is usually better to
 /// keep everything in one big batch because GPU kernel launches are already
 /// parallel.
+#[cfg(feature = "parallel")]
 pub fn rayon_batch_sweep<B: Backend>(
     base_config: SimConfig,
     param: SweepParam,
@@ -1652,6 +1672,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "parallel")]
     #[test]
     fn bench_rayon_vs_single_g2do() {
         use std::time::Instant;
@@ -1720,6 +1741,7 @@ mod tests {
         assert!(rayon_ms < single_ms * 5.0, "rayon unexpectedly slow: {}ms vs {}ms", rayon_ms, single_ms);
     }
 
+    #[cfg(feature = "parallel")]
     #[test]
     fn bench_rayon_batch_vs_parallel_sweep() {
         use std::time::Instant;
@@ -1998,6 +2020,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "parallel")]
     #[test]
     fn test_rayon_batch_matches_single_batch() {
         let device: <B as Backend>::Device = Default::default();
