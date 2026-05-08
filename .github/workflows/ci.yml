@@ -107,7 +107,7 @@ jobs:
         run: npm install
       - name: Install Playwright browsers
         working-directory: web
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install --with-deps firefox
       - name: Run E2E tests
         working-directory: web
         run: npx playwright test --reporter=list

@@ -17,32 +17,24 @@ const G2DO_CONFIG = JSON.stringify({
   },
 });
 
+async function withWasm(page: any, fn: string, ...args: any[]) {
+  return page.evaluate(async ([fnBody, fnArgs]) => {
+    const mod = await import("./pkg/hyburn.js");
+    await mod.default();
+    const fn = new Function("mod", ...Object.keys(fnArgs), fnBody);
+    return fn(mod, ...Object.values(fnArgs));
+  }, [fn, args.reduce((o, v, i) => ({ ...o, [`a${i}`]: v }), {})]);
+}
+
 test.describe("hyburn WASM API", () => {
-  let wasmReady = false;
-
-  test.beforeAll(async ({ browser }) => {
-    const page = await browser.newPage();
-    await page.goto("/");
-    try {
-      await page.evaluate(async () => {
-        const init = (await import("./pkg/hyburn.js")).default;
-        await init();
-      });
-      wasmReady = true;
-    } catch {
-      wasmReady = false;
-    }
-    await page.close();
-  });
-
   test.beforeEach(async ({ page }) => {
-    await page.goto("/");
-    if (!wasmReady) test.skip("WASM init failed in this environment");
+    await page.goto("/test-harness.html");
   });
 
   test("WASM module exports expected API", async ({ page }) => {
     const exports = await page.evaluate(async () => {
       const mod = await import("./pkg/hyburn.js");
+      await mod.default();
       return Object.keys(mod).filter(k => k !== "default").sort();
     });
     expect(exports).toContain("WebEngine");
@@ -54,9 +46,10 @@ test.describe("hyburn WASM API", () => {
 
   test("WebEngine constructor accepts JSON string", async ({ page }) => {
     const result = await page.evaluate(async (cfg) => {
-      const { WebEngine } = await import("./pkg/hyburn.js");
+      const mod = await import("./pkg/hyburn.js");
+      await mod.default();
       try {
-        const engine = new WebEngine(cfg);
+        const engine = new mod.WebEngine(cfg);
         return { ok: true, nvar: engine.info().nvar, nnodes: engine.info().nnodes };
       } catch (e: any) {
         return { ok: false, error: String(e) };
@@ -69,10 +62,11 @@ test.describe("hyburn WASM API", () => {
 
   test("WebEngine.from_json does NOT exist (static method is from_toml)", async ({ page }) => {
     const result = await page.evaluate(async () => {
-      const { WebEngine } = await import("./pkg/hyburn.js");
+      const mod = await import("./pkg/hyburn.js");
+      await mod.default();
       return {
-        hasFromJson: typeof (WebEngine as any).from_json,
-        hasFromToml: typeof (WebEngine as any).from_toml,
+        hasFromJson: typeof (mod.WebEngine as any).from_json,
+        hasFromToml: typeof (mod.WebEngine as any).from_toml,
       };
     });
     expect(result.hasFromJson).toBe("undefined");
@@ -81,9 +75,10 @@ test.describe("hyburn WASM API", () => {
 
   test("new WebEngine.from_json() throws TypeError (catches the original bug)", async ({ page }) => {
     const result = await page.evaluate(async (cfg) => {
-      const { WebEngine } = await import("./pkg/hyburn.js");
+      const mod = await import("./pkg/hyburn.js");
+      await mod.default();
       try {
-        const engine = new (WebEngine as any).from_json(cfg);
+        const engine = new (mod.WebEngine as any).from_json(cfg);
         return { ok: true };
       } catch (e: any) {
         return { ok: false, error: String(e) };
@@ -120,9 +115,10 @@ cvar_map = "0:0"
 delays = []
 `;
     const result = await page.evaluate(async (toml) => {
-      const { WebEngine } = await import("./pkg/hyburn.js");
+      const mod = await import("./pkg/hyburn.js");
+      await mod.default();
       try {
-        const engine = WebEngine.from_toml(toml);
+        const engine = mod.WebEngine.from_toml(toml);
         return { ok: true, nvar: engine.info().nvar };
       } catch (e: any) {
         return { ok: false, error: String(e) };
@@ -134,8 +130,9 @@ delays = []
 
   test("step() and step_n() advance simulation", async ({ page }) => {
     const result = await page.evaluate(async (cfg) => {
-      const { WebEngine } = await import("./pkg/hyburn.js");
-      const engine = new WebEngine(cfg);
+      const mod = await import("./pkg/hyburn.js");
+      await mod.default();
+      const engine = new mod.WebEngine(cfg);
       engine.step();
       const s1 = engine.current_step();
       engine.step_n(99);
@@ -150,10 +147,8 @@ delays = []
   test("trajectory() returns Float32Array with correct size", async ({ page }) => {
     const result = await page.evaluate(async (cfg) => {
       const mod = await import("./pkg/hyburn.js");
-      const init = mod.default;
-      try { await init(); } catch {}
-      const { WebEngine } = mod;
-      const engine = new WebEngine(cfg);
+      await mod.default();
+      const engine = new mod.WebEngine(cfg);
       engine.step_n(10);
       const traj = engine.trajectory();
       return { length: traj.length, isFloat32: traj instanceof Float32Array };
@@ -164,36 +159,40 @@ delays = []
 
   test("validate_config_json returns empty for valid config", async ({ page }) => {
     const err = await page.evaluate(async (cfg) => {
-      const { validate_config_json } = await import("./pkg/hyburn.js");
-      return validate_config_json(cfg);
+      const mod = await import("./pkg/hyburn.js");
+      await mod.default();
+      return mod.validate_config_json(cfg);
     }, G2DO_CONFIG);
     expect(err).toBe("");
   });
 
   test("validate_config_json returns error for invalid config", async ({ page }) => {
     const err = await page.evaluate(async () => {
-      const { validate_config_json } = await import("./pkg/hyburn.js");
-      return validate_config_json(JSON.stringify({ sim_length: 100, dt: -1, network: { subnetworks: [{ model: "Bad", nnodes: 2, nmodes: 1, params: [1], initial_state: [0, 0] }], projections: [] } }));
+      const mod = await import("./pkg/hyburn.js");
+      await mod.default();
+      return mod.validate_config_json(JSON.stringify({ sim_length: 100, dt: -1, network: { subnetworks: [{ model: "Bad", nnodes: 2, nmodes: 1, params: [1], initial_state: [0, 0] }], projections: [] } }));
     });
     expect(err).not.toBe("");
   });
 
   test("list_presets returns non-empty array", async ({ page }) => {
     const count = await page.evaluate(async () => {
-      const { list_presets } = await import("./pkg/hyburn.js");
-      return JSON.parse(list_presets()).length;
+      const mod = await import("./pkg/hyburn.js");
+      await mod.default();
+      return JSON.parse(mod.list_presets()).length;
     });
     expect(count).toBeGreaterThan(0);
   });
 
   test("all presets validate successfully", async ({ page }) => {
     const errors = await page.evaluate(async () => {
-      const { list_presets, get_preset, validate_config_json } = await import("./pkg/hyburn.js");
-      const presets = JSON.parse(list_presets());
+      const mod = await import("./pkg/hyburn.js");
+      await mod.default();
+      const presets = JSON.parse(mod.list_presets());
       const bad: string[] = [];
       for (const p of presets) {
-        const cfg = get_preset(p.id);
-        const err = validate_config_json(cfg);
+        const cfg = mod.get_preset(p.id);
+        const err = mod.validate_config_json(cfg);
         if (err !== "") bad.push(`${p.id}: ${err}`);
       }
       return bad;
@@ -203,13 +202,14 @@ delays = []
 
   test("each preset creates a working engine", async ({ page }) => {
     const errors = await page.evaluate(async () => {
-      const { list_presets, get_preset, WebEngine } = await import("./pkg/hyburn.js");
-      const presets = JSON.parse(list_presets());
+      const mod = await import("./pkg/hyburn.js");
+      await mod.default();
+      const presets = JSON.parse(mod.list_presets());
       const bad: string[] = [];
       for (const p of presets) {
         try {
-          const cfg = get_preset(p.id);
-          const engine = new WebEngine(cfg);
+          const cfg = mod.get_preset(p.id);
+          const engine = new mod.WebEngine(cfg);
           engine.step_n(5);
           if (engine.current_step() !== 5) bad.push(`${p.id}: step count wrong`);
         } catch (e: any) {
@@ -223,9 +223,10 @@ delays = []
 
   test("invalid JSON in constructor throws, not crashes", async ({ page }) => {
     const result = await page.evaluate(async () => {
-      const { WebEngine } = await import("./pkg/hyburn.js");
+      const mod = await import("./pkg/hyburn.js");
+      await mod.default();
       try {
-        new WebEngine("{ not json }");
+        new mod.WebEngine("{ not json }");
         return { ok: true };
       } catch (e: any) {
         return { ok: false, error: String(e) };
@@ -236,9 +237,10 @@ delays = []
 
   test("unknown model in constructor throws", async ({ page }) => {
     const result = await page.evaluate(async () => {
-      const { WebEngine } = await import("./pkg/hyburn.js");
+      const mod = await import("./pkg/hyburn.js");
+      await mod.default();
       try {
-        new WebEngine(JSON.stringify({
+        new mod.WebEngine(JSON.stringify({
           sim_length: 100, dt: 0.1,
           network: { subnetworks: [{ model: "Nonexistent", nnodes: 2, nmodes: 1, params: [1], initial_state: [0, 0] }], projections: [] },
         }));
