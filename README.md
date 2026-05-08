@@ -1,10 +1,9 @@
 # hyburn
 
-Burn-based GPU hybrid neural mass simulator with simulation-based inference (SBI).
-
-## What it does
-
-Hyburn simulates whole-brain neural mass models on GPU (CUDA/WGPU) or CPU (NdArray), runs parameter sweeps, extracts time-series features, and trains Masked Autoregressive Flows (MAF) for simulation-based inference — all from a single Rust binary.
+Hyburn simulates whole-brain neural mass models on GPU (CUDA/WGPU) or CPU
+(NdArray), runs parameter sweeps, extracts time-series features, and trains
+Masked Autoregressive Flows (MAF) for simulation-based inference — all from a
+single Rust binary or wasm-based web app.
 
 ## Quick start
 
