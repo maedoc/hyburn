@@ -315,6 +315,7 @@ mod tests {
             monitors: vec![],
             stimuli: vec![],
             nsig: 0.0,
+            backend: "ndarray".to_string(),
         };
 
         let csr_cfg = SimConfig {
@@ -328,6 +329,7 @@ mod tests {
             monitors: vec![],
             stimuli: vec![],
             nsig: 0.0,
+            backend: "ndarray".to_string(),
         };
 
         let mut dense_engine =

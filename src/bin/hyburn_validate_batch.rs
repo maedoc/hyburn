@@ -100,6 +100,7 @@ fn main() {
         monitors: vec![],
         stimuli: vec![],
         nsig: 0.0,
+            backend: "ndarray".to_string(),
     };
 
     println!("=== Serial HybridEngine Comparison (I_ext = 0.0) ===");

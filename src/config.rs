@@ -45,6 +45,14 @@ pub struct SimConfig {
     /// Noise amplitude for stochastic integration.
     #[serde(default)]
     pub nsig: f32,
+    /// Compute backend: "ndarray" (CPU), "wgpu" (GPU/Metal/Vulkan), or "cuda" (NVIDIA).
+    /// Overridable by CLI flag; defaults to ndarray.
+    #[serde(default = "default_backend")]
+    pub backend: String,
+}
+
+fn default_backend() -> String {
+    "ndarray".to_string()
 }
 
 impl SimConfig {
@@ -366,11 +374,13 @@ impl SweepConfig {
         if let Some(ref vals) = self.values {
             vals.clone()
         } else if let Some(ref range) = self.range {
-            let mut vals = Vec::new();
-            let mut v = range.start;
-            while v <= range.end + 1e-6 {
-                vals.push(v);
-                v += range.step;
+            if range.step <= 0.0 {
+                return Vec::new();
+            }
+            let n = ((range.end - range.start) / range.step).ceil() as usize + 1;
+            let mut vals = Vec::with_capacity(n);
+            for i in 0..n {
+                vals.push(range.start + (i as f32) * range.step);
             }
             vals
         } else {
@@ -437,6 +447,7 @@ initial_state = [0.0, 0.5, 0.0, 0.5]
             monitors: vec![],
             stimuli: vec![],
             nsig: 0.0,
+            backend: "ndarray".to_string(),
         };
         assert!(cfg.validate().is_err());
     }
@@ -469,6 +480,7 @@ initial_state = [0.0, 0.5, 0.0, 0.5]
                 monitors: vec![],
                 stimuli: vec![],
                 nsig: 0.0,
+            backend: "ndarray".to_string(),
             };
             cfg.validate().unwrap_or_else(|e| panic!("{} failed validation: {}", name, e));
         }
@@ -493,6 +505,7 @@ initial_state = [0.0, 0.5, 0.0, 0.5]
             monitors: vec![],
             stimuli: vec![],
             nsig: 0.0,
+            backend: "ndarray".to_string(),
         };
         let err = cfg.validate().unwrap_err();
         let msg = format!("{}", err);

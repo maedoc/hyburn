@@ -311,6 +311,7 @@ mod tests {
             monitors: vec![],
             stimuli: vec![],
             nsig: 0.0,
+            backend: "ndarray".to_string(),
         };
         let sc = vec![0.1, 0.2, 0.3, 0.4];
         let cfg = build_sim_config_with_sc(&template, &sc, 2);

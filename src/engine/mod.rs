@@ -50,6 +50,7 @@ pub enum EngineModel<B: Backend> {
     JansenRit { params: Vec<f32> },
     WilsonCowan { params: Vec<f32> },
     #[doc(hidden)]
+    #[allow(dead_code)]
     _Phantom(std::marker::PhantomData<B>),
 }
 
@@ -74,7 +75,7 @@ impl<B: Backend> EngineModel<B> {
             EngineModel::Kuramoto { .. } => <Kuramoto as NeuralMassModel<B>>::NVAR,
             EngineModel::JansenRit { .. } => <JansenRit as NeuralMassModel<B>>::NVAR,
             EngineModel::WilsonCowan { .. } => <WilsonCowan as NeuralMassModel<B>>::NVAR,
-            EngineModel::_Phantom(_) => unreachable!(),
+            _ => unreachable!(),
         }
     }
 
@@ -86,7 +87,7 @@ impl<B: Backend> EngineModel<B> {
             EngineModel::Kuramoto { .. } => <Kuramoto as NeuralMassModel<B>>::NCVAR,
             EngineModel::JansenRit { .. } => <JansenRit as NeuralMassModel<B>>::NCVAR,
             EngineModel::WilsonCowan { .. } => <WilsonCowan as NeuralMassModel<B>>::NCVAR,
-            EngineModel::_Phantom(_) => unreachable!(),
+            _ => unreachable!(),
         }
     }
 
@@ -184,8 +185,9 @@ pub struct HybridEngine<B: Backend> {
     /// GPU-side accumulators for BOLD neural input: one per monitor.
     /// Each is a 1D tensor of shape [nnodes] that accumulates var0 mean-over-modes.
     bold_accumulators: Vec<Option<Tensor<B, 1>>>,
-    /// How many neural steps have been accumulated in the BOLD accumulators.
-    bold_accumulator_count: usize,
+    /// Per-monitor accumulation counters: how many neural steps have been
+    /// accumulated for each BOLD monitor. Indices match bold_monitors.
+    bold_accumulator_counts: Vec<usize>,
 }
 
 /// Checkpoint constants.
@@ -215,7 +217,7 @@ impl<B: Backend> HybridEngine<B> {
             EngineModel::Kuramoto { .. } => "Kuramoto".to_string(),
             EngineModel::JansenRit { .. } => "JansenRit".to_string(),
             EngineModel::WilsonCowan { .. } => "WilsonCowan".to_string(),
-            EngineModel::_Phantom(_) => unreachable!(),
+            _ => unreachable!(),
         };
         let params = match &model {
             EngineModel::G2do { params } => params.clone(),
@@ -224,7 +226,7 @@ impl<B: Backend> HybridEngine<B> {
             EngineModel::Kuramoto { params } => params.clone(),
             EngineModel::JansenRit { params } => params.clone(),
             EngineModel::WilsonCowan { params } => params.clone(),
-            EngineModel::_Phantom(_) => unreachable!(),
+            _ => unreachable!(),
         };
 
         let sub = Subnetwork {
@@ -264,14 +266,15 @@ impl<B: Backend> HybridEngine<B> {
             stimuli: vec![],
             trajectory: Vec::new(),
             nsig: 0.0,
-            progress: None,
+progress: None,
             bold_monitors: vec![],
             bold_accumulators: vec![],
-            bold_accumulator_count: 0,
+            bold_accumulator_counts: vec![],
         }
     }
 
     /// Build an engine from a `SimConfig`.
+    #[track_caller]
     pub fn from_config(cfg: SimConfig, device: B::Device) -> Result<Self> {
         let mut subnetworks = Vec::new();
         let mut states = Vec::new();
@@ -478,6 +481,10 @@ impl<B: Backend> HybridEngine<B> {
             let mon_type = mon_cfg.monitor_type.to_ascii_lowercase();
             if mon_type == "bold" {
                 let target = 0usize; // default to subnetwork 0 if not specified
+                if target >= subnetworks.len() {
+                    log::warn!("BOLD monitor target {} out of range ({} subnets); skipping", target, subnetworks.len());
+                    continue;
+                }
                 let bold_period = mon_cfg.bold_period.unwrap_or_else(|| {
                     // Derive from period (ms) / dt
                     let period_ms = mon_cfg.period.unwrap_or(2000.0);
@@ -510,14 +517,14 @@ impl<B: Backend> HybridEngine<B> {
             device,
             projections,
             stimuli: cfg.stimuli.iter()
-                .map(|s| StimulusApplier::from_config(s).map_err(|e| SimulationError::InvalidConfig(format!("Invalid stimulus: {}", e))))
+                .map(|s| StimulusApplier::from_config(s))
                 .collect::<Result<Vec<_>>>()?,
             trajectory: Vec::new(),
             nsig: cfg.nsig,
             progress: None,
-            bold_monitors,
             bold_accumulators: vec![],
-            bold_accumulator_count: 0,
+            bold_accumulator_counts: vec![0; bold_monitors.len()],
+            bold_monitors,
         })
     }
 
@@ -586,6 +593,8 @@ impl<B: Backend> HybridEngine<B> {
             let src_sub = &self.subnetworks[proj.src];
             let _tgt_sub = &self.subnetworks[proj.tgt];
 
+            let coupling_fn = proj.coupling_cfg.to_boxed(); // box once per projection, not per mode
+
             let mut mode_couplings = Vec::new();
             for mode in 0..src_sub.nmodes {
                 let mode_state = src_state.clone().narrow(2, mode, 1).squeeze::<2>(2); // [nvar, nnodes]
@@ -619,9 +628,8 @@ impl<B: Backend> HybridEngine<B> {
                                     .and_then(|d| d.get(edge_idx).copied())
                                     .unwrap_or(0);
 
-                                let src_row: Vec<f32> = if edge_delay == 0 || self.step == 0 {
-                                    let cvars_data = crate::io::tensor_to_flat_f32(cvars_t.clone()).0;
-                                    cvars_data[src_node * ncvar_extract..(src_node + 1) * ncvar_extract].to_vec()
+                                let src_row = if edge_delay == 0 || self.step == 0 {
+                                    cvars_t.clone().narrow(0, src_node, 1) // [1, ncvar], GPU tensor
                                 } else {
                                     let raw_delay = edge_delay as usize;
                                     if raw_delay <= self.step {
@@ -629,19 +637,13 @@ impl<B: Backend> HybridEngine<B> {
                                         let delayed_state = h.clone().narrow(3, slot, 1).squeeze::<3>(3);
                                         let delayed_mode_state = delayed_state.narrow(2, mode, 1).squeeze::<2>(2);
                                         let delayed_cvars = delayed_mode_state.narrow(0, 0, ncvar_extract);
-                                        let delayed_cvars_t = delayed_cvars.permute([1, 0]);
-                                        let delayed_data = crate::io::tensor_to_flat_f32(delayed_cvars_t).0;
-                                        delayed_data[src_node * ncvar_extract..(src_node + 1) * ncvar_extract].to_vec()
+                                        delayed_cvars.permute([1, 0]).narrow(0, src_node, 1) // [1, ncvar], GPU tensor
                                     } else {
-                                        vec![0.0f32; ncvar_extract]
+                                        Tensor::<B, 2>::zeros([1, ncvar_extract], &self.device) // [1, ncvar], GPU tensor
                                     }
-                                };
+                                }; // src_row is [1, ncvar] — a GPU tensor, no CPU copy
 
-                                let src_tensor = Tensor::<B, 2>::from_floats(
-                                    TensorData::new::<f32, Vec<usize>>(src_row, vec![1, ncvar_extract]),
-                                    &self.device,
-                                );
-                                let post_edge = proj.coupling_cfg.apply(src_tensor);
+                                let post_edge = proj.coupling_cfg.apply(src_row);
                                 let post_data = crate::io::tensor_to_flat_f32(post_edge).0;
 
                                 for cvar in 0..ncvar_extract {
@@ -676,7 +678,6 @@ impl<B: Backend> HybridEngine<B> {
                             cvars_t.clone()
                         };
 
-                        let coupling_fn = proj.coupling_cfg.to_boxed();
                         sparse_coupling(
                             csr_data,
                             csr_indices,
@@ -865,10 +866,10 @@ impl<B: Backend> HybridEngine<B> {
                 self.bold_accumulators = self.bold_monitors.iter().map(|m| {
                     Some(Tensor::<B, 1>::zeros([m.nnodes], &self.device))
                 }).collect();
-                self.bold_accumulator_count = 0;
+                self.bold_accumulator_counts = vec![0; self.bold_monitors.len()];
             }
 
-            for (mi, monitor) in self.bold_monitors.iter().enumerate() {
+            for (mi, monitor) in self.bold_monitors.iter_mut().enumerate() {
                 let target = monitor.target_subnetwork;
                 if target >= n_subs {
                     continue;
@@ -887,31 +888,21 @@ impl<B: Backend> HybridEngine<B> {
                 if let Some(ref mut acc) = self.bold_accumulators[mi] {
                     *acc = acc.clone() + var0;
                 }
-            }
-            self.bold_accumulator_count += 1;
+                self.bold_accumulator_counts[mi] += 1;
 
-            // Check if any monitor needs flushing
-            let min_period = self.bold_monitors.iter().map(|m| m.bold_period).min().unwrap_or(1);
-            if self.bold_accumulator_count >= min_period {
-                let count = self.bold_accumulator_count as f32;
-                for (mi, monitor) in self.bold_monitors.iter_mut().enumerate() {
-                    if self.bold_accumulator_count >= monitor.bold_period {
-                        // Transfer accumulator to CPU, divide by count, pass to BOLD monitor
-                        if let Some(ref acc) = self.bold_accumulators[mi] {
-                            let avg = acc.clone().div_scalar(count);
-                            let (flat, _shape) = crate::io::tensor_to_flat_f32::<B, 1>(avg);
-                            monitor.accumulate(&flat);
-                        }
-                        // Reset this accumulator
-                        self.bold_accumulators[mi] = Some(Tensor::<B, 1>::zeros([monitor.nnodes], &self.device));
+                // Check if this monitor needs flushing
+                let count = self.bold_accumulator_counts[mi];
+                if count >= monitor.bold_period {
+                    let count_f = count as f32;
+                    // Transfer accumulator to CPU, divide by count, pass to BOLD monitor
+                    if let Some(ref acc) = self.bold_accumulators[mi] {
+                        let avg = acc.clone().div_scalar(count_f);
+                        let (flat, _shape) = crate::io::tensor_to_flat_f32::<B, 1>(avg);
+                        monitor.accumulate(&flat);
                     }
-                }
-                // Only reset global counter when ALL monitors have flushed
-                let all_flushed = self.bold_monitors.iter().all(|m| {
-                    self.bold_accumulator_count.is_multiple_of(m.bold_period)
-                });
-                if all_flushed {
-                    self.bold_accumulator_count = 0;
+                    // Reset this monitor's accumulator and counter
+                    self.bold_accumulators[mi] = Some(Tensor::<B, 1>::zeros([monitor.nnodes], &self.device));
+                    self.bold_accumulator_counts[mi] = 0;
                 }
             }
         }
@@ -1025,6 +1016,16 @@ impl<B: Backend> HybridEngine<B> {
             }};
         }
 
+        macro_rules! check_remaining {
+            ($n_bytes:expr) => {{
+                if offset + $n_bytes > buf.len() {
+                    return Err(SimulationError::InvalidState(
+                        "Checkpoint data truncated: expected more bytes".into()
+                    ));
+                }
+            }};
+        }
+
         // Magic
         if buf.len() < 8 || &buf[0..8] != CKPT_MAGIC {
             return Err(SimulationError::InvalidState("Invalid checkpoint file (bad magic)".into()));
@@ -1063,6 +1064,7 @@ impl<B: Backend> HybridEngine<B> {
         };
 
         let mut shapes = Vec::with_capacity(n_subs);
+        check_remaining!(n_subs * 3 * 8); // 3 u64 per subnetwork: nvar, nnodes, nmodes
         for _ in 0..n_subs {
             let nvar = read_u64!() as usize;
             let nnodes = read_u64!() as usize;
@@ -1082,6 +1084,7 @@ impl<B: Backend> HybridEngine<B> {
             }
 
             let n_elements = nvar * nnodes * nmodes;
+            check_remaining!(n_elements * 4); // f32 = 4 bytes per element
             let mut flat = vec![0.0f32; n_elements];
             for flat_j in flat.iter_mut().take(n_elements) {
                 *flat_j = read_f32!();

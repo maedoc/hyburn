@@ -87,18 +87,17 @@ impl<B: Backend> MAF<B> {
 
         for layer in self.layers.iter().rev() {
             let y_perm = x.clone();
-            let mut u_parts: Vec<Tensor<B, 2>> = Vec::new();
+            let mut u_parts: Vec<Tensor<B, 2>> = Vec::with_capacity(d);
+            // Pre-allocate the zero padding tensor once, to build
+            // the autoregressive input by cat() without per-iteration re-allocation.
+            let zeros = Tensor::<B, 2>::zeros([n_samples, d], &device);
 
             for i in 0..d {
-                let u = if u_parts.is_empty() {
-                    Tensor::<B, 2>::zeros([n_samples, d], &device)
-                } else {
-                    let remaining = d - u_parts.len();
-                    let zeros = Tensor::<B, 2>::zeros([n_samples, remaining], &device);
-                    let mut parts = u_parts.clone();
-                    parts.push(zeros);
-                    Tensor::cat(parts, 1)
-                };
+                let remaining = d - u_parts.len();
+                let pad = zeros.clone().narrow(1, 0, remaining);
+                let mut parts = u_parts.clone();
+                parts.push(pad);
+                let u = Tensor::cat(parts, 1);
 
                 let (mu, alpha) = layer.forward(u, context.clone());
                 let mu_i = mu.narrow(1, i, 1);

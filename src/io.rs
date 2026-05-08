@@ -99,10 +99,12 @@ pub fn write_npy_f32<P: AsRef<Path>>(path: P, data: &[f32], shape: &[usize]) -> 
         shape_str
     );
 
-    // Pad header to be divisible by 64 (for alignment), plus room for \n
+    // Pad header to be divisible by 64 (for alignment), including 10-byte prefix and newline
     let mut header = header;
-    let padded_len = ((header.len() + 10 + 1).div_ceil(64) * 64) - 10 - 1;
-    while header.len() < padded_len {
+    let total_with_newline = header.len() + 10 + 1;
+    let remainder = total_with_newline % 64;
+    let padding_needed = if remainder == 0 { 0 } else { 64 - remainder };
+    for _ in 0..padding_needed {
         header.push(' ');
     }
     header.push('\n');
@@ -145,49 +147,83 @@ pub fn tensor_to_flat_f32<B: Backend, const N: usize>(
     (values, shape)
 }
 
+/// Extract a Python-quoted key's value from an NPY header using a state machine.
+/// Only matches key positions that are outside of any string literal, preventing
+/// false matches when `'key':` appears as part of a string value.
+/// Returns `None` if the key is not found, or if the value is malformed.
+fn find_quoted_value<'a>(header: &'a str, key: &str) -> Option<&'a str> {
+    let bytes = header.as_bytes();
+    let key_bytes = key.as_bytes();
+    let n = bytes.len();
+    let mut in_string = false;
+    let mut i = 0;
+
+    while i < n {
+        let ch = bytes[i];
+
+        // Check for quoted key FIRST (before toggling in_string)
+        if !in_string && (ch == b'\'' || ch == b'\"') {
+            let quote = ch;
+            if i + 1 + key_bytes.len() + 1 < n 
+                && bytes[i+1..].starts_with(key_bytes) 
+                && bytes[i + 1 + key_bytes.len()] == quote
+                && bytes[i + 1 + key_bytes.len() + 1] == b':' 
+            {
+                // Found quoted key 'key':, extract value
+                let val_start = i + 1 + key_bytes.len() + 2; // skip 'key':
+                let after_colon = &bytes[val_start..];
+                let after_colon_str = std::str::from_utf8(after_colon).ok()?;
+                let trimmed = after_colon_str.trim_start();
+
+                if trimmed.starts_with('(') {
+                    let mut depth = 0;
+                    let mut j = 0;
+                    for (k, c) in trimmed.char_indices() {
+                        if c == '(' { depth += 1; }
+                        if c == ')' { depth -= 1; }
+                        if depth == 0 && c == ')' {
+                            j = k;
+                            break;
+                        }
+                    }
+                    return Some(trimmed[1..j].trim());
+                } else if trimmed.starts_with('\'') || trimmed.starts_with('"') {
+                    let quote = trimmed.chars().next()?;
+                    let after_quote = &trimmed[1..];
+                    if let Some(end_pos) = after_quote.find(quote) {
+                        return Some(&after_quote[..end_pos]);
+                    }
+                }
+            }
+        }
+
+        // Toggle in_string for regular string content
+        if ch == b'\'' || ch == b'\"' {
+            in_string = !in_string;
+        }
+
+        i += 1;
+    }
+    None
+}
+
 /// Parse shape from NPY header string like "{'descr': '<f4', ... 'shape': (2, 3) }"
 fn parse_npy_shape(header: &str) -> Result<Vec<usize>> {
-    let shape_start = header.find("'shape':")
-        .or_else(|| header.find("\"shape:\""))
+    let inner = find_quoted_value(header, "shape")
         .ok_or_else(|| SimulationError::InvalidState("No 'shape' key in NPY header".into()))?;
-    let remaining = &header[shape_start..];
-
-    let paren_start = remaining.find('(')
-        .ok_or_else(|| SimulationError::InvalidState("No '(' after 'shape' in NPY header".into()))?;
-    let paren_end = remaining.find(')')
-        .ok_or_else(|| SimulationError::InvalidState("No ')' after 'shape' in NPY header".into()))?;
-
-    let inner = &remaining[paren_start + 1..paren_end];
     let shape: Vec<usize> = inner.split(',')
         .map(|s| s.trim())
         .filter(|s| !s.is_empty())
         .map(|s| s.parse::<usize>())
         .collect::<std::result::Result<Vec<_>, _>>()
         .map_err(|e| SimulationError::InvalidState(format!("Failed to parse NPY shape: {}", e)))?;
-
     Ok(shape)
 }
 
 /// Parse dtype descriptor from NPY header string
 fn parse_npy_descr(header: &str) -> Result<String> {
-    // Find 'descr': then skip to the value after the colon
-    let descr_key = header.find("'descr':")
-        .or_else(|| header.find("\"descr:\""))
+    let value = find_quoted_value(header, "descr")
         .ok_or_else(|| SimulationError::InvalidState("No 'descr' key in NPY header".into()))?;
-    let after_key = &header[descr_key + "'descr':".len()..];
-
-    // Skip whitespace, then find the opening quote of the value
-    let after_key = after_key.trim_start();
-    let (value, _rest) = if let Some(inner) = after_key.strip_prefix('\'') {
-        let end = inner.find('\'').ok_or_else(|| SimulationError::InvalidState("No closing single quote for descr".into()))?;
-        (&inner[..end], &inner[end + 1..])
-    } else if let Some(inner) = after_key.strip_prefix('\"') {
-        let end = inner.find('\"').ok_or_else(|| SimulationError::InvalidState("No closing double quote for descr".into()))?;
-        (&inner[..end], &inner[end + 1..])
-    } else {
-        return Err(SimulationError::InvalidState("No opening quote for descr value".into()));
-    };
-
     Ok(value.to_string())
 }
 

@@ -1,5 +1,10 @@
 //! Batch-dim GPU sweep — runs all sweep points simultaneously on GPU.
 //!
+//! **Deprecated**: This module is a benchmark-only utility hardcoded to a specific
+//! 3-subnet ring (G2DO → JR → WC). New code should use `BatchHybridEngine` from
+//! `src/engine/batch_engine/` instead, which supports arbitrary network topologies
+//! and model configurations.
+//!
 //! Key idea: stack all sweep points as a leading batch dimension
 //! `[n_sweep, nnodes, nvar]` so each Burn tensor operation processes
 //! all 1024 points in parallel. This reduces kernel launches from
@@ -36,6 +41,7 @@ pub struct BatchGpuSweepResult {
 /// * `n_steps` - Number of integration steps
 /// * `dt` - Time step
 /// * `coupling_weight` - Scalar coupling weight
+#[deprecated(note = "Use BatchHybridEngine instead; batch_sweep_3subnet is hardcoded to a 3-subnet ring")]
 pub fn batch_sweep_3subnet<B: Backend>(
     i_ext_values: &[f32],
     nnodes: usize,

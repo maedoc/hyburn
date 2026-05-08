@@ -59,6 +59,7 @@ fn main() {
         monitors: vec![],
         stimuli: vec![],
         nsig: 0.0,
+            backend: "ndarray".to_string(),
     };
 
     let mut engine = BatchHybridEngine::<B>::from_config(config, 5, device).unwrap();

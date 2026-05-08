@@ -133,6 +133,7 @@ fn main() {
                 monitors: vec![],
                 stimuli: vec![],
                 nsig: 0.0,
+            backend: "ndarray".to_string(),
             };
 
             // Warmup
@@ -279,6 +280,7 @@ fn main() {
                     monitors: vec![],
                     stimuli: vec![],
                     nsig: 0.0,
+            backend: "ndarray".to_string(),
                 };
 
                 let mut warmup_engine = BatchHybridEngine::<B>::from_config(config.clone(), 3, device.clone()).unwrap();

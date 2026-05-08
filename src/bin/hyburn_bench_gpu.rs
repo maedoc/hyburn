@@ -82,6 +82,7 @@ fn make_3subnet_config(nnodes: usize) -> SimConfig {
         monitors: vec![],
         stimuli: vec![],
         nsig: 0.0,
+            backend: "ndarray".to_string(),
     }
 }
 

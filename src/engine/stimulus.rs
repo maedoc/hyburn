@@ -10,6 +10,7 @@
 //! at every integration step.
 
 use crate::config::StimulusConfig;
+use crate::error::SimulationError;
 
 /// Parsed stimulus pattern applied during simulation steps.
 #[derive(Debug, Clone)]
@@ -24,33 +25,33 @@ pub struct StimulusApplier {
 
 impl StimulusApplier {
     /// Build an applier from a config entry.
-    pub fn from_config(cfg: &StimulusConfig) -> Result<Self, String> {
+    pub fn from_config(cfg: &StimulusConfig) -> Result<Self, SimulationError> {
         let pattern = cfg.temporal.to_lowercase();
         let params = cfg.params.clone();
         // Validate param counts
         match pattern.as_str() {
             "impulse" => {
                 if params.len() < 2 {
-                    return Err("temporal=impulse requires [onset_ms, amplitude]".into());
+                    return Err(SimulationError::InvalidConfig("temporal=impulse requires [onset_ms, amplitude]".into()));
                 }
             }
             "step" => {
                 if params.len() < 3 {
-                    return Err("temporal=step requires [onset_ms, offset_ms, amplitude]".into());
+                    return Err(SimulationError::InvalidConfig("temporal=step requires [onset_ms, offset_ms, amplitude]".into()));
                 }
             }
             "sinusoid" => {
                 if params.len() < 3 {
-                    return Err("temporal=sinusoid requires [onset_ms, amplitude, frequency_hz, phase_rad?]".into());
+                    return Err(SimulationError::InvalidConfig("temporal=sinusoid requires [onset_ms, amplitude, frequency_hz, phase_rad?]".into()));
                 }
             }
             "pulse_train" => {
                 if params.len() < 4 {
-                    return Err("temporal=pulse_train requires [onset_ms, amplitude, period_ms, width_ms]".into());
+                    return Err(SimulationError::InvalidConfig("temporal=pulse_train requires [onset_ms, amplitude, period_ms, width_ms]".into()));
                 }
             }
             _ => {
-                return Err(format!("Unknown temporal pattern: {}", cfg.temporal));
+                return Err(SimulationError::InvalidConfig(format!("Unknown temporal pattern: {}", cfg.temporal)));
             }
         }
         Ok(Self { target: cfg.target, pattern, params })

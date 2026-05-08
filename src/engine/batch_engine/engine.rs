@@ -5,6 +5,7 @@ use std::time::Instant;
 use crate::config::{InitialStateConfig, NetworkConfig, SimConfig, WeightsConfig};
 use crate::engine::{EngineModel, IntegratorKind};
 use crate::engine::parse_cvar_map;
+use crate::error::SimulationError;
 
 use super::dfun::{dfun_batch, clamp_batch, model_prefers_heun, model_param_slice};
 use super::projection::{PrecomputedProjection, ProjectionWeightKind};
@@ -83,13 +84,12 @@ impl<B: Backend> BatchHybridEngine<B> {
         base_config: SimConfig,
         n_sweep: usize,
         device: B::Device,
-    ) -> Result<Self, String> {
+    ) -> crate::error::Result<Self> {
         let mut models = Vec::new();
         let mut states = Vec::new();
 
         for sub_cfg in &base_config.network.subnetworks {
-            let model = EngineModel::<B>::from_config(&sub_cfg.model, sub_cfg.params.clone())
-                .map_err(|e| format!("{:?}", e))?;
+            let model = EngineModel::<B>::from_config(&sub_cfg.model, sub_cfg.params.clone())?;
 
             // Initial state: [n_sweep, nnodes, nvar]
             let nvar = model.nvar();
@@ -109,8 +109,7 @@ impl<B: Backend> BatchHybridEngine<B> {
                 InitialStateConfig::NpyPath(path) => {
                     #[cfg(not(target_arch = "wasm32"))]
                     {
-                        let (data, shape) = crate::io::read_npy_f32(path)
-                            .map_err(|e| format!("Failed to read initial state NPY: {:?}", e))?;
+                        let (data, shape) = crate::io::read_npy_f32(path)?;
                         // NPY can be 2D [nvar, nnodes] or 3D [nvar, nnodes, nmodes]
                         // We need flat order: [nnodes*nmodes, nvar] in row-major
                         let single: Vec<f32> = if shape.len() == 2 {
@@ -149,10 +148,10 @@ impl<B: Backend> BatchHybridEngine<B> {
                             }
                             transposed
                         } else {
-                            return Err(format!(
+                            return Err(SimulationError::InvalidConfig(format!(
                                 "Initial state NPY has {} dims, expected 2 or 3",
                                 shape.len()
-                            ));
+                            )));
                         };
                         // Replicate across sweep points
                         let mut batch = Vec::with_capacity(n_sweep * single.len());
@@ -275,16 +274,16 @@ impl<B: Backend> BatchHybridEngine<B> {
             let tgt_ncvar = models[proj.tgt].ncvar();
             for &(s, t) in &cvar_map_parsed {
                 if s >= src_ncvar {
-                    return Err(format!(
+                    return Err(SimulationError::InvalidConfig(format!(
                         "Projection {} cvar_map src index {} >= src_ncvar {}",
                         precomputed_projections.len(), s, src_ncvar
-                    ));
+                    )));
                 }
                 if t >= tgt_ncvar {
-                    return Err(format!(
+                    return Err(SimulationError::InvalidConfig(format!(
                         "Projection {} cvar_map tgt index {} >= tgt_ncvar {}",
                         precomputed_projections.len(), t, tgt_ncvar
-                    ));
+                    )));
                 }
             }
 
@@ -696,6 +695,7 @@ mod tests {
             monitors: vec![],
             stimuli: vec![],
             nsig: 0.0,
+            backend: "ndarray".to_string(),
         };
 
         let mut engine = BatchHybridEngine::<B>::from_config(config, 3, device).unwrap();
@@ -740,6 +740,7 @@ mod tests {
             monitors: vec![],
             stimuli: vec![],
             nsig: 0.0,
+            backend: "ndarray".to_string(),
         };
 
         let mut engine = BatchHybridEngine::<B>::from_config(config, 2, device).unwrap();
@@ -906,6 +907,7 @@ mod tests {
             monitors: vec![],
             stimuli: vec![],
             nsig: 0.0,
+            backend: "ndarray".to_string(),
         };
 
         let mut engine = BatchHybridEngine::<B>::from_config(config, 2, device).unwrap();
@@ -957,6 +959,7 @@ mod tests {
             monitors: vec![],
             stimuli: vec![],
             nsig: 0.0,
+            backend: "ndarray".to_string(),
         };
 
         let mut config_batch = config_serial.clone();
@@ -1020,6 +1023,7 @@ mod tests {
             monitors: vec![],
             stimuli: vec![],
             nsig: 0.0,
+            backend: "ndarray".to_string(),
         };
 
         let mut config_batch = config_serial.clone();
@@ -1090,6 +1094,7 @@ mod tests {
             monitors: vec![],
             stimuli: vec![],
             nsig: 0.0,
+            backend: "ndarray".to_string(),
         };
 
         let mut config_batch = config_serial.clone();
@@ -1159,6 +1164,7 @@ mod tests {
             monitors: vec![],
             stimuli: vec![],
             nsig: 0.0,
+            backend: "ndarray".to_string(),
         };
 
         let mut config_batch = config_serial.clone();
@@ -1224,6 +1230,7 @@ mod tests {
             monitors: vec![],
             stimuli: vec![],
             nsig: 0.0,
+            backend: "ndarray".to_string(),
         };
 
         let mut config_batch = config_serial.clone();
@@ -1288,6 +1295,7 @@ mod tests {
             monitors: vec![],
             stimuli: vec![],
             nsig: 0.0,
+            backend: "ndarray".to_string(),
         };
 
         let mut config_batch = config_serial.clone();
@@ -1401,6 +1409,7 @@ mod tests {
             monitors: vec![],
             stimuli: vec![],
             nsig: 0.0,
+            backend: "ndarray".to_string(),
         };
 
         let mut config_batch = config_serial.clone();
@@ -1523,6 +1532,7 @@ mod tests {
             monitors: vec![],
             stimuli: vec![],
             nsig: 0.0,
+            backend: "ndarray".to_string(),
         };
 
         let mut config_batch = config_serial.clone();
@@ -1645,6 +1655,7 @@ mod tests {
             monitors: vec![],
             stimuli: vec![],
             nsig: 0.0,
+            backend: "ndarray".to_string(),
         };
 
         let device: <B as Backend>::Device = Default::default();
@@ -1703,6 +1714,7 @@ mod tests {
             monitors: vec![],
             stimuli: vec![],
             nsig: 0.0,
+            backend: "ndarray".to_string(),
         };
 
         let device: <B as Backend>::Device = Default::default();
@@ -1773,6 +1785,7 @@ mod tests {
             monitors: vec![],
             stimuli: vec![],
             nsig: 0.0,
+            backend: "ndarray".to_string(),
         };
 
         let device: <B as Backend>::Device = Default::default();
@@ -1865,6 +1878,7 @@ mod tests {
                 monitors: vec![],
                 stimuli: vec![],
                 nsig: 0.0,
+            backend: "ndarray".to_string(),
             };
 
             let device: <B as Backend>::Device = Default::default();
@@ -1940,6 +1954,7 @@ mod tests {
             monitors: vec![],
             stimuli: vec![],
             nsig: 0.0,
+            backend: "ndarray".to_string(),
         };
 
         let mut engine = BatchHybridEngine::<B>::from_config(config.clone(), 1, device.clone()).unwrap();
@@ -1993,6 +2008,7 @@ mod tests {
             monitors: vec![],
             stimuli: vec![],
             nsig: 0.0,
+            backend: "ndarray".to_string(),
         };
 
         let mut engine_with_traj = BatchHybridEngine::<B>::from_config(config.clone(), 2, device.clone()).unwrap();
@@ -2044,6 +2060,7 @@ mod tests {
             monitors: vec![],
             stimuli: vec![],
             nsig: 0.0,
+            backend: "ndarray".to_string(),
         };
 
         let mut single_engine = BatchHybridEngine::<B>::from_config(config.clone(), sweep_values.len(), device.clone()).unwrap();

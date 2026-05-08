@@ -150,6 +150,10 @@ fn build_masks<B: Backend>(
     hidden_dim: usize,
     device: &B::Device,
 ) -> (Tensor<B, 2>, Tensor<B, 2>) {
+    // NOTE: masks are stored as f32 (0.0 / 1.0) since Burn 0.16 does not
+    // expose a dedicated bool tensor kind for NdArray/wgpu backends.
+    // When Bool tensors are available, these can be stored as [D, H] Bool
+    // and cast to f32 on use via .float(), reducing memory by 32x.
     let m_in: Vec<usize> = (1..=param_dim).collect();
     let m_h: Vec<usize> = if param_dim > 1 {
         (0..hidden_dim)

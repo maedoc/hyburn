@@ -164,7 +164,13 @@ impl Cli {
                 sweep.as_deref(),
             ),
             Command::Benchmark { .. } => {
-                anyhow::bail!("Benchmark not yet implemented");
+                anyhow::bail!(
+                    "Benchmark subcommand is not yet implemented. \
+                     Use one of the standalone benchmark binaries: \
+                     `hyburn-bench-batch-sweep`, `hyburn-bench-generic-cuda`, \
+                     `hyburn-validate-batch`, or `hyburn-validate-accuracy`. \
+                     These are compiled as separate binaries in `src/bin/`."
+                );
             }
             Command::TrainSbi { config } => {
                 let cfg = crate::sbi::MafConfig::from_file(config.as_str())?;

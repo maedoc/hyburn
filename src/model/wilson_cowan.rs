@@ -44,9 +44,7 @@ impl<B: Backend> NeuralMassModel<B> for WilsonCowan {
     }
 
     fn clamp(state: &mut Tensor<B, 2>) {
-        let e = state.clone().narrow(1, 0, 1).clamp(0.0, 1.0);
-        let i = state.clone().narrow(1, 1, 1).clamp(0.0, 1.0);
-        *state = Tensor::cat(vec![e, i], 1);
+        *state = state.clone().clamp(0.0, 1.0);
     }
 }
 

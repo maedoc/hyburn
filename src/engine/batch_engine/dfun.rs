@@ -9,6 +9,14 @@ use crate::engine::EngineModel;
 
 /// Batch-dim model dispatch: calls model-specific batch dfun on [n_sweep, nnodes, nvar].
 ///
+/// The `sweep_param` convention: `Option<(param_idx, &Tensor<B, 3>)>` where
+/// `param_idx` is the 0-based index into the model's parameter slice (see
+/// `model_param_slice` for each model's parameter layout), and the tensor has
+/// shape `[n_sweep, 1, 1]` with per-sweep values. Each model dfun extracts the
+/// relevant param_idx from the tensor:
+///   - G2DO: idx=1 (I_ext), JansenRit: idx=12 (J), WilsonCowan: idx=18 (tau_e),
+///   - Mpr: idx=4 (eta), Kuramoto: idx=0 (K), Rww: idx=7 (J_NMDA)
+///
 /// Returns derivatives as [n_sweep, nnodes, nvar].
 pub fn dfun_batch<B: Backend>(
     model: &EngineModel<B>,
@@ -101,6 +109,7 @@ fn dfun_batch_fallback<B: Backend>(
     _params: &[f32],
     _sweep_param: Option<(usize, &Tensor<B, 3>)>,
 ) -> Tensor<B, 3> {
+    log::warn!("dfun_batch_fallback: using slow sequential iteration over {} sweep points", state.shape().dims[0]);
     let shape = state.shape();
     let n_sweep = shape.dims[0];
     let _nnodes = shape.dims[1];
@@ -382,6 +391,6 @@ pub fn model_param_slice<B: Backend>(model: &EngineModel<B>) -> Vec<f32> {
         EngineModel::Kuramoto { params } => params.clone(),
         EngineModel::JansenRit { params } => params.clone(),
         EngineModel::WilsonCowan { params } => params.clone(),
-        EngineModel::_Phantom(_) => unreachable!(),
+        _ => unreachable!(),
     }
 }

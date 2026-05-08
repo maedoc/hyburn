@@ -30,6 +30,11 @@ required-features = ["cli"]
 path = "src/bin/hyburn_bench_generic_cuda.rs"
 
 [[bin]]
+name = "hyburn-bench-batch-generic"
+required-features = ["cli", "wgpu"]
+path = "src/bin/hyburn_bench_batch_generic.rs"
+
+[[bin]]
 name = "hyburn-bench-batch-sweep"
 required-features = ["cli"]
 path = "src/bin/hyburn_bench_batch_sweep.rs"
