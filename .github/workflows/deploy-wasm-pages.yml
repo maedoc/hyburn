@@ -2,7 +2,7 @@ name: Deploy WASM demo to GitHub Pages
 
 on:
   push:
-    branches: [feature/wasm-web-ui]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
