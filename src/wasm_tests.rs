@@ -5,7 +5,7 @@
 use wasm_bindgen_test::*;
 use wasm_bindgen::JsValue;
 
-use crate::wasm::{WebEngine, validate_config_json, model_registry_json};
+use crate::wasm::{WebEngine, validate_config_json, model_registry_json, list_presets, get_preset};
 
 wasm_bindgen_test_configure!(run_in_browser);
 
@@ -157,4 +157,39 @@ fn test_engine_integrator() {
     let engine = WebEngine::from_json(&g2do_config_json())
         .expect("Failed to create engine");
     assert_eq!(engine.integrator(), "euler", "Integrator should be euler");
+}
+
+#[wasm_bindgen_test]
+fn test_list_presets() {
+    let json = list_presets();
+    let presets: Vec<serde_json::Value> = serde_json::from_str(&json).unwrap();
+    assert!(presets.len() >= 12, "Should have at least 12 presets, got {}", presets.len());
+    assert!(presets.iter().any(|p| p["id"] == "demo"), "Should contain 'demo' preset");
+}
+
+#[wasm_bindgen_test]
+fn test_get_preset() {
+    let json = get_preset("demo");
+    assert_ne!(json, "", "demo preset should return non-empty JSON");
+    let cfg: serde_json::Value = serde_json::from_str(&json).expect("demo preset should be valid JSON");
+    assert_eq!(cfg["network"]["subnetworks"][0]["model"], "Generic2dOscillator");
+}
+
+#[wasm_bindgen_test]
+fn test_get_preset_unknown() {
+    let json = get_preset("nonexistent_preset");
+    assert_eq!(json, "", "Unknown preset should return empty string");
+}
+
+#[wasm_bindgen_test]
+fn test_all_presets_valid() {
+    let json = list_presets();
+    let presets: Vec<serde_json::Value> = serde_json::from_str(&json).unwrap();
+    for preset in &presets {
+        let id = preset["id"].as_str().unwrap();
+        let cfg_json = get_preset(id);
+        assert_ne!(cfg_json, "", "Preset '{}' should return non-empty JSON", id);
+        let err = validate_config_json(&cfg_json);
+        assert_eq!(err, "", "Preset '{}' should validate: {}", id, err);
+    }
 }

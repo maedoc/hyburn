@@ -143,10 +143,27 @@ export class WebEngine {
 }
 
 /**
+ * Get a preset's JSON config by its ID.
+ *
+ * Returns the full SimConfig JSON with inline initial_state data
+ * (NPY files already resolved to float arrays at build time).
+ *
+ * Returns an empty string if the ID is not found.
+ */
+export function get_preset(id: string): string;
+
+/**
  * Initialize the console logger for WASM.
  * Call this once from JS before using any simulation functions.
  */
 export function init_logger(): void;
+
+/**
+ * Get the list of available preset examples as a JSON string.
+ *
+ * Returns an array of `{id, name, description}` objects.
+ */
+export function list_presets(): string;
 
 /**
  * Get the default parameters for a model as a JSON string.
@@ -200,6 +217,8 @@ export interface InitOutput {
     readonly engineinfo_nnodes: (a: number) => number;
     readonly engineinfo_nvar: (a: number) => number;
     readonly engineinfo_total_steps: (a: number) => number;
+    readonly get_preset: (a: number, b: number) => [number, number];
+    readonly list_presets: () => [number, number];
     readonly model_default_params: (a: number, b: number) => [number, number, number, number];
     readonly model_registry_json: () => [number, number];
     readonly run_sbi_json: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
@@ -231,8 +250,8 @@ export interface InitOutput {
     readonly __wbindgen_externrefs: WebAssembly.Table;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
-    readonly __externref_table_dealloc: (a: number) => void;
     readonly __wbindgen_free: (a: number, b: number, c: number) => void;
+    readonly __externref_table_dealloc: (a: number) => void;
     readonly __wbindgen_start: () => void;
 }
 

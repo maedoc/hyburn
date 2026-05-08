@@ -314,11 +314,55 @@ export class WebEngine {
 if (Symbol.dispose) WebEngine.prototype[Symbol.dispose] = WebEngine.prototype.free;
 
 /**
+ * Get a preset's JSON config by its ID.
+ *
+ * Returns the full SimConfig JSON with inline initial_state data
+ * (NPY files already resolved to float arrays at build time).
+ *
+ * Returns an empty string if the ID is not found.
+ * @param {string} id
+ * @returns {string}
+ */
+export function get_preset(id) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.get_preset(ptr0, len0);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
  * Initialize the console logger for WASM.
  * Call this once from JS before using any simulation functions.
  */
 export function init_logger() {
     wasm.init_logger();
+}
+
+/**
+ * Get the list of available preset examples as a JSON string.
+ *
+ * Returns an array of `{id, name, description}` objects.
+ * @returns {string}
+ */
+export function list_presets() {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+        const ret = wasm.list_presets();
+        deferred1_0 = ret[0];
+        deferred1_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+    }
 }
 
 /**

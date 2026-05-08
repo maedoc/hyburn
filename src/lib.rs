@@ -17,5 +17,8 @@ pub mod wasm;
 #[cfg(all(test, feature = "wasm"))]
 mod wasm_tests;
 
+#[cfg(feature = "wasm")]
+mod presets;
+
 /// Re-export Burn backend types for convenience
 pub use burn::tensor::Tensor;

@@ -321,6 +321,39 @@ pub fn model_default_params(model_name: &str) -> Result<String, JsValue> {
 }
 
 // ---------------------------------------------------------------------------
+// Preset Examples
+// ---------------------------------------------------------------------------
+
+/// Get the list of available preset examples as a JSON string.
+///
+/// Returns an array of `{id, name, description}` objects.
+#[wasm_bindgen]
+pub fn list_presets() -> String {
+    use crate::presets::PRESETS;
+    let entries: Vec<serde_json::Value> = PRESETS.iter().map(|p| {
+        serde_json::json!({
+            "id": p.id,
+            "name": p.name,
+            "description": p.description,
+        })
+    }).collect();
+    serde_json::to_string(&entries).unwrap_or_else(|_| "[]".to_string())
+}
+
+/// Get a preset's JSON config by its ID.
+///
+/// Returns the full SimConfig JSON with inline initial_state data
+/// (NPY files already resolved to float arrays at build time).
+///
+/// Returns an empty string if the ID is not found.
+#[wasm_bindgen]
+pub fn get_preset(id: &str) -> String {
+    crate::presets::get_preset_json(id)
+        .unwrap_or("")
+        .to_string()
+}
+
+// ---------------------------------------------------------------------------
 // SBI Pipeline (WASM)
 // ---------------------------------------------------------------------------
 
