@@ -2,7 +2,7 @@
   "name": "hyburn",
   "type": "module",
   "description": "Burn-based GPU hybrid neural mass simulator with SBI",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "files": [
     "hyburn_bg.wasm",
     "hyburn.js",

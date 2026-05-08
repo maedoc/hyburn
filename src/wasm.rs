@@ -3,6 +3,10 @@
 //! Exposes the core simulation engine to JavaScript/WebAssembly via
 //! `wasm-bindgen`. This enables running neural mass simulations
 //! directly in the browser with live, interactive trajectory visualization.
+//!
+//! SBI pipeline (v0.3+): uses `BatchHybridEngine` with batch-dim tensors
+//! for efficient per-sweep simulation, replacing the old per-point
+//! `HybridEngine` loop.
 
 use burn::backend::ndarray::NdArray;
 use burn::tensor::{Tensor, TensorData};
@@ -12,6 +16,8 @@ use wasm_bindgen::prelude::*;
 
 use crate::config::SimConfig;
 use crate::engine::{HybridEngine, IntegratorKind};
+use crate::engine::batch_engine::{BatchHybridEngine, SweepParam};
+use crate::sbi::{extract_features, extract_features_with, parse_feature_set, MafConfig};
 
 /// The NdArray f32 backend type used for WASM simulations.
 type B = NdArray<f32>;
@@ -359,8 +365,7 @@ pub fn get_preset(id: &str) -> String {
 
 /// Result of running the SBI pipeline in the browser.
 ///
-/// This is a JSON-serializable struct that the JS layer can use
-/// to render interactive diagnostic plots.
+/// JSON-serializable struct that the JS layer uses to render diagnostic plots.
 #[derive(serde::Serialize)]
 pub struct WebSbiResult {
     /// Parameter values used in the sweep.
@@ -377,98 +382,154 @@ pub struct WebSbiResult {
     pub maf_config: crate::sbi::MafConfig,
 }
 
-/// Run a small SBI pipeline and return results as a JSON string.
+/// Reshape a batch-dim trajectory (flat from [n_sweep, nnodes*nmodes, nvar]
+/// tensors concatenated per step) into per-sweep-point layout expected by
+/// `extract_features`: `[n_steps, nvar, nnodes, nmodes]` per point.
 ///
-/// This is intended for small demo problems (few nodes, short simulation).
-/// For realistic-scale SBI, use a server-side pipeline.
+/// Batch layout (row-major 3D tensor per step): step → sweep_point → (node*mode, var)
+///   flat[t * (ns * nmt * nv) + s * (nmt * nv) + (n*nm + m) * nv + v]
+///
+/// Per-point target: [n_steps, nvar, nnodes, nmodes]
+///   per_point[((t * nv + v) * nn + n) * nm + m]
+fn reshape_batch_to_per_point(
+    batch_flat: &[f32],
+    n_sweep: usize,
+    n_steps: usize,
+    nvar: usize,
+    nnodes: usize,
+    nmodes: usize,
+) -> Vec<Vec<f32>> {
+    let nm_total = nnodes * nmodes; // combined node-mode axis in batch tensor
+    let nv = nvar;
+    let per_point_elems = n_steps * nv * nnodes * nmodes;
+    let mut result = Vec::with_capacity(n_sweep);
+    for s in 0..n_sweep {
+        let mut traj = vec![0.0f32; per_point_elems];
+        for t in 0..n_steps {
+            for v in 0..nv {
+                for n in 0..nnodes {
+                    for m in 0..nmodes {
+                        let batch_idx = ((t * n_sweep + s) * nm_total
+                            + (n * nmodes + m)) * nv
+                            + v;
+                        let per_idx = ((t * nv + v) * nnodes + n) * nmodes + m;
+                        traj[per_idx] = batch_flat[batch_idx];
+                    }
+                }
+            }
+        }
+        result.push(traj);
+    }
+    result
+}
+
+/// Run a full SBI pipeline in the browser and return results as JSON.
+///
+/// Uses `BatchHybridEngine` for the sweep (all points in one batch-dim
+/// engine) instead of the old per-point `HybridEngine` loop. Removes
+/// hardcoded G2DO/Euler/dt=0.1 assumptions — reads model, integrator,
+/// dt, and initial state from the config.
 ///
 /// # Arguments
-/// * `config_json` - JSON string matching `SimConfig` schema
-/// * `n_sweep` - Number of parameter sweep points
-/// * `n_steps` - Simulation steps per sweep point
+/// * `config_json` - SimConfig JSON string
+/// * `n_sweep` - number of sweep points
+/// * `n_steps` - simulation steps per point
 /// * `n_epochs` - MAF training epochs
 /// * `batch_size` - MAF training batch size
-/// * `n_post_samples` - Number of posterior samples per test point
-/// * `param_idx` - Parameter index to sweep (default: 1 = I_ext for G2DO)
+/// * `n_post_samples` - posterior samples per test point
+/// * `param_name` - sweep parameter name like "I_ext" or "subnetworks[0].params[1]"
+///   (or numeric param_idx like "1" for backward compat)
+/// * `range_min`, `range_max` - sweep value range
+/// * `feature_set` - "classic" (3 stats) or "catch22" (22 features)
 #[wasm_bindgen]
-pub fn run_sbi_json(
+pub fn run_sbi_json_cfg(
     config_json: &str,
     n_sweep: usize,
     n_steps: usize,
     n_epochs: usize,
     batch_size: usize,
     n_post_samples: usize,
-    param_idx: usize,
+    param_name: &str,
+    range_min: f32,
+    range_max: f32,
+    feature_set: &str,
 ) -> Result<String, JsValue> {
     let cfg = SimConfig::from_json_str(config_json)
         .map_err(|e| JsValue::from_str(&format!("Config error: {}", e)))?;
     cfg.validate()
         .map_err(|e| JsValue::from_str(&format!("Validation error: {}", e)))?;
 
-    use crate::engine::{EngineModel, HybridEngine};
-    use crate::model::g2do::g2do_default_params;
-    use crate::sbi::{extract_features, train_maf_with_data_and_log, MafConfig};
     use burn::backend::autodiff::Autodiff;
-
     type AD = Autodiff<NdArray<f32>>;
 
     let device: <B as Backend>::Device = Default::default();
     let device_ad: <AD as Backend>::Device = Default::default();
 
+    // Resolve sweep parameter to (sub_idx, param_idx)
+    let (sub_idx, param_idx) = resolve_sweep_param_name(param_name, 0, 1);
+    let sweep_param = SweepParam { sub_idx, param_idx };
+
+    // Build sweep values
+    let sweep_values: Vec<f32> = if n_sweep <= 1 {
+        vec![range_min]
+    } else {
+        (0..n_sweep)
+            .map(|i| range_min + i as f32 * (range_max - range_min) / (n_sweep - 1) as f32)
+            .collect()
+    };
+
+    // --- 1. Run batch-dim sweep with trajectories ---
+    let mut batch_engine = BatchHybridEngine::<B>::from_config(cfg.clone(), n_sweep, device.clone())
+        .map_err(|e| JsValue::from_str(&format!("BatchHybridEngine error: {}", e)))?;
+
+    let result = batch_engine.run_sweep_with_trajectory(
+        &sweep_param,
+        &sweep_values,
+        n_steps,
+    );
+
+    // --- 2. Extract features from per-point trajectories ---
     let nnodes = cfg.network.subnetworks[0].nnodes;
     let nmodes = cfg.network.subnetworks[0].nmodes;
     let nvar = crate::config::lookup_model(&cfg.network.subnetworks[0].model)
         .map(|(nv, _, _)| nv)
         .unwrap_or(2);
 
-    // 1. Parameter sweep
+    let batch_traj = result.trajectories.as_ref()
+        .and_then(|t| t.first().cloned())
+        .ok_or_else(|| JsValue::from_str("No trajectories in batch result"))?;
+
+    let all_trajs = reshape_batch_to_per_point(
+        &batch_traj, n_sweep, n_steps, nvar, nnodes, nmodes,
+    );
+
+    let fs = crate::sbi::parse_feature_set(feature_set).ok_or_else(|| {
+        JsValue::from_str(&format!("Unknown feature_set: {}", feature_set))
+    })?;
+
+    let shape = [n_steps, nvar, nnodes, nmodes];
+    let mut all_features: Vec<f32> = Vec::with_capacity(n_sweep * nvar * fs.features_per_var());
     let mut all_params: Vec<f32> = Vec::with_capacity(n_sweep);
-    let mut all_features: Vec<f32> = Vec::new();
-    let mut sweep_values: Vec<f32> = Vec::with_capacity(n_sweep);
 
-    let range_min = -0.5_f32;
-    let range_max = 0.5_f32;
-
-    for i in 0..n_sweep {
-        let param_val = range_min
-            + i as f32 * ((range_max - range_min) / (n_sweep - 1).max(1) as f32);
-
-        let mut params = g2do_default_params();
-        params[param_idx] = param_val;
-
-        let initial_data = vec![0.0f32; nvar * nnodes * nmodes];
-        let state = Tensor::<B, 3>::from_floats(
-            TensorData::new::<f32, Vec<usize>>(initial_data, vec![nvar, nnodes, nmodes]),
-            &device,
-        );
-
-        let model = EngineModel::<B>::G2do { params };
-        let mut engine = HybridEngine::new(state, model, IntegratorKind::Euler, 0.1, 1, device.clone());
-        engine.run(n_steps);
-
-        let features = extract_features(
-            &engine.trajectory,
-            &[n_steps, nvar, nnodes, nmodes],
-        );
-
-        all_params.push(param_val);
-        all_features.extend_from_slice(&features);
-        sweep_values.push(param_val);
+    for s in 0..n_sweep {
+        let feats = extract_features_with(&all_trajs[s], &shape, &fs);
+        all_features.extend_from_slice(&feats);
+        all_params.push(sweep_values[s]);
     }
 
     let feature_dim = if n_sweep > 0 { all_features.len() / n_sweep } else { 0 };
 
-    // 2. Train MAF
+    // --- 3. Train MAF ---
     let maf_config = MafConfig {
         param_dim: 1,
         feature_dim,
         hidden_units: 16,
         n_flows: 2,
         learning_rate: 1e-2,
-        feature_set: "classic".to_string(),
+        feature_set: feature_set.to_string(),
     };
 
-    let (maf, loss_history) = train_maf_with_data_and_log(
+    let (maf, loss_history) = crate::sbi::train_maf_with_data_and_log(
         &maf_config,
         all_params.clone(),
         all_features.clone(),
@@ -476,9 +537,9 @@ pub fn run_sbi_json(
         batch_size,
     );
 
-    // 3. Posterior inference
+    // --- 4. Posterior inference ---
     let prior_mean = (range_min + range_max) / 2.0;
-    let prior_std = (range_max - range_min) / (2.0 * 3.0f32.sqrt()); // std of uniform
+    let prior_std = (range_max - range_min) / (2.0 * 3.0f32.sqrt());
 
     let mut posterior_stats: Vec<(f32, f32, f32)> = Vec::with_capacity(n_sweep);
     let mut all_posterior_samples: Vec<f32> = Vec::new();
@@ -506,7 +567,7 @@ pub fn run_sbi_json(
         all_true_params.push(true_param);
     }
 
-    // 4. Diagnostics
+    // --- 5. Diagnostics ---
     let diagnostics = crate::sbi::SbiDiagnostics::from_samples(
         &all_posterior_samples,
         &all_true_params,
@@ -516,7 +577,7 @@ pub fn run_sbi_json(
         1,
     );
 
-    let result = WebSbiResult {
+    let web_result = WebSbiResult {
         sweep_values,
         loss_history,
         diagnostics,
@@ -525,6 +586,67 @@ pub fn run_sbi_json(
         maf_config,
     };
 
-    serde_json::to_string(&result)
+    serde_json::to_string(&web_result)
         .map_err(|e| JsValue::from_str(&format!("JSON serialization error: {}", e)))
+}
+
+/// Resolve a sweep parameter name or index into (sub_idx, param_idx).
+///
+/// Supports:
+/// - `"N"` where N is a number → (sub_idx=0, param_idx=N) [backward compat]
+/// - `"subnetworks[K].params[P]"` → (sub_idx=K, param_idx=P) [config style]
+fn resolve_sweep_param_name(
+    name: &str,
+    default_sub_idx: usize,
+    default_param_idx: usize,
+) -> (usize, usize) {
+    // Try parse as plain integer → backward compat with old param_idx
+    if let Ok(idx) = name.parse::<usize>() {
+        return (default_sub_idx, idx);
+    }
+    // Try "subnetworks[X].params[Y]" format
+    if name.contains(".params[") {
+        // Extract sub_idx
+        if let Some(start) = name.find('[') {
+            if let Some(end) = name[start+1..].find(']') {
+                let sub_end = start + 1 + end;
+                if let Ok(sub_idx) = name[start+1..sub_end].parse::<usize>() {
+                    // Extract param_idx
+                    if let Some(pstart) = name.rfind('[') {
+                        if let Some(pend) = name[pstart+1..].find(']') {
+                            let p_end = pstart + 1 + pend;
+                            if let Ok(p_idx) = name[pstart+1..p_end].parse::<usize>() {
+                                return (sub_idx, p_idx);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // Default fallback
+    (default_sub_idx, default_param_idx)
+}
+
+// ---------------------------------------------------------------------------
+// Backward-compatible wrapper (keeps JS API stable for existing users)
+// ---------------------------------------------------------------------------
+
+/// Run a small SBI pipeline (legacy wrapper — calls `run_sbi_json_cfg`
+/// with default range [-0.5, 0.5] and Classic feature set).
+#[wasm_bindgen]
+pub fn run_sbi_json(
+    config_json: &str,
+    n_sweep: usize,
+    n_steps: usize,
+    n_epochs: usize,
+    batch_size: usize,
+    n_post_samples: usize,
+    param_idx: usize,
+) -> Result<String, JsValue> {
+    run_sbi_json_cfg(
+        config_json, n_sweep, n_steps, n_epochs, batch_size, n_post_samples,
+        &param_idx.to_string(),
+        -0.5, 0.5, "classic",
+    )
 }

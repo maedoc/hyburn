@@ -2,7 +2,7 @@
 
 ## Environment
 
-- Rust is NOT on the default PATH. Always prefix cargo/rustc commands with:
+- Rust might not be on the default PATH. Check and then prefix cargo/rustc commands with:
   ```
   PATH="$HOME/.cargo/bin:$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:$PATH"
   ```

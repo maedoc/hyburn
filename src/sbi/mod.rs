@@ -26,7 +26,7 @@ pub use dataset::SbiDataset;
 pub use diagnostics::SbiDiagnostics;
 pub use features::{
     apply_normalization, extract_features, extract_features_with, normalize_features,
-    FeatureDomain, FeatureSet,
+    FeatureDomain, FeatureSet, parse_feature_set,
 };
 pub use made::MADE;
 pub use maf::MAF;

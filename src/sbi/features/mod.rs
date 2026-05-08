@@ -133,6 +133,30 @@ impl FeatureSet {
     }
 }
 
+/// Parse a feature set name string into a `FeatureSet` enum.
+///
+/// Supports: "classic", "catch22", "catch24", "fc", "spectral",
+/// "temporal_stat", and "combined:classic,catch22" prefix notation.
+pub fn parse_feature_set(s: &str) -> Option<FeatureSet> {
+    let s = s.trim().to_lowercase();
+    match s.as_str() {
+        "classic" => Some(FeatureSet::Classic),
+        "catch22" => Some(FeatureSet::Catch22),
+        "catch24" => Some(FeatureSet::Catch24),
+        "fc" => Some(FeatureSet::Fc),
+        "spectral" => Some(FeatureSet::Spectral),
+        "temporal_stat" => Some(FeatureSet::TemporalStat),
+        other if other.starts_with("combined:") => {
+            let parts: Vec<FeatureSet> = other["combined:".len()..]
+                .split(',')
+                .filter_map(|p| parse_feature_set(p.trim()))
+                .collect();
+            if parts.is_empty() { None } else { Some(FeatureSet::Combined(parts)) }
+        }
+        _ => None,
+    }
+}
+
 /// Extract features from a flat simulation trajectory.
 ///
 /// `trajectory` is a flat `[n_steps, nvar, nnodes, nmodes]` array.

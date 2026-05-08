@@ -163,7 +163,7 @@ impl<B: Backend> BatchHybridEngine<B> {
                     #[cfg(target_arch = "wasm32")]
                     {
                         let _ = path;
-                        return Err("NPY file loading not supported in WASM".to_string());
+                        return Err(SimulationError::BackendError("NPY file loading not supported in WASM".into()));
                     }
                 }
                 InitialStateConfig::Memory { data, shape } => {

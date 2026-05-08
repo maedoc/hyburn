@@ -177,21 +177,32 @@ export function model_default_params(model_name: string): string;
 export function model_registry_json(): string;
 
 /**
- * Run a small SBI pipeline and return results as a JSON string.
- *
- * This is intended for small demo problems (few nodes, short simulation).
- * For realistic-scale SBI, use a server-side pipeline.
- *
- * # Arguments
- * * `config_json` - JSON string matching `SimConfig` schema
- * * `n_sweep` - Number of parameter sweep points
- * * `n_steps` - Simulation steps per sweep point
- * * `n_epochs` - MAF training epochs
- * * `batch_size` - MAF training batch size
- * * `n_post_samples` - Number of posterior samples per test point
- * * `param_idx` - Parameter index to sweep (default: 1 = I_ext for G2DO)
+ * Run a small SBI pipeline (legacy wrapper — calls `run_sbi_json_cfg`
+ * with default range [-0.5, 0.5] and Classic feature set).
  */
 export function run_sbi_json(config_json: string, n_sweep: number, n_steps: number, n_epochs: number, batch_size: number, n_post_samples: number, param_idx: number): string;
+
+/**
+ * Run a full SBI pipeline in the browser and return results as JSON.
+ *
+ * Uses `BatchHybridEngine` for the sweep (all points in one batch-dim
+ * engine) instead of the old per-point `HybridEngine` loop. Removes
+ * hardcoded G2DO/Euler/dt=0.1 assumptions — reads model, integrator,
+ * dt, and initial state from the config.
+ *
+ * # Arguments
+ * * `config_json` - SimConfig JSON string
+ * * `n_sweep` - number of sweep points
+ * * `n_steps` - simulation steps per point
+ * * `n_epochs` - MAF training epochs
+ * * `batch_size` - MAF training batch size
+ * * `n_post_samples` - posterior samples per test point
+ * * `param_name` - sweep parameter name like "I_ext" or "subnetworks[0].params[1]"
+ *   (or numeric param_idx like "1" for backward compat)
+ * * `range_min`, `range_max` - sweep value range
+ * * `feature_set` - "classic" (3 stats) or "catch22" (22 features)
+ */
+export function run_sbi_json_cfg(config_json: string, n_sweep: number, n_steps: number, n_epochs: number, batch_size: number, n_post_samples: number, param_name: string, range_min: number, range_max: number, feature_set: string): string;
 
 /**
  * Validate a JSON config string without creating an engine.
@@ -222,6 +233,7 @@ export interface InitOutput {
     readonly model_default_params: (a: number, b: number) => [number, number, number, number];
     readonly model_registry_json: () => [number, number];
     readonly run_sbi_json: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
+    readonly run_sbi_json_cfg: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number) => [number, number, number, number];
     readonly validate_config_json: (a: number, b: number) => [number, number];
     readonly validate_config_toml: (a: number, b: number) => [number, number];
     readonly webengine_all_states: (a: number) => any;

@@ -15,6 +15,7 @@ export const list_presets: () => [number, number];
 export const model_default_params: (a: number, b: number) => [number, number, number, number];
 export const model_registry_json: () => [number, number];
 export const run_sbi_json: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
+export const run_sbi_json_cfg: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number) => [number, number, number, number];
 export const validate_config_json: (a: number, b: number) => [number, number];
 export const validate_config_toml: (a: number, b: number) => [number, number];
 export const webengine_all_states: (a: number) => any;

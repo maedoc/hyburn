@@ -184,6 +184,38 @@
         .status .err { color: var(--red); }
         .status .warn { color: var(--yellow); }
 
+        #viz-tabs {
+            display: flex;
+            border-bottom: 1px solid var(--border);
+            background: var(--surface);
+        }
+
+        .tab-btn {
+            padding: 8px 16px;
+            border: none;
+            background: none;
+            color: var(--text-muted);
+            font-size: 12px;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            transition: all 0.15s;
+        }
+
+        .tab-btn:hover { color: var(--text); }
+        .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+        #viz-sbi-content { display: flex; flex-direction: column; flex: 1; }
+        #sbi-diagnostics { font-size: 12px; line-height: 1.6; }
+        #sbi-diagnostics table { border-collapse: collapse; margin-top: 8px; }
+        #sbi-diagnostics td, #sbi-diagnostics th {
+            border: 1px solid var(--border); padding: 4px 8px; text-align: right;
+        }
+        #sbi-diagnostics th { color: var(--text-muted); font-weight: 600; text-align: left; }
+        .sbi-badge { display: inline-block; padding: 2px 6px; border-radius: 4px; font-weight: 600; }
+        .sbi-badge.good { background: rgba(63,185,80,0.2); color: var(--green); }
+        .sbi-badge.warn { background: rgba(210,153,34,0.2); color: var(--yellow); }
+        .sbi-badge.bad  { background: rgba(248,81,73,0.2); color: var(--red); }
+
         .loading {
             position: fixed;
             inset: 0;
@@ -310,16 +342,75 @@
                 <button class="btn btn-primary" id="btn-start">▶ Start</button>
                 <button class="btn" id="btn-pause" disabled>⏸ Pause</button>
             </div>
+
+            <hr class="divider">
+
+            <h2>SBI Pipeline</h2>
+            <p class="sbi-note" style="font-size:11px;color:var(--text-muted);margin-bottom:10px">
+                Runs parameter sweep → feature extraction → MAF train → posterior inference.
+                Results appear in the SBI tab of the visualization panel.
+            </p>
+
+            <div class="field">
+                <label>Sweep Parameter Name</label>
+                <input id="sbi-param-name" value="I_ext" placeholder="e.g. I_ext or subnets[0].params[1]">
+            </div>
+            <div class="field">
+                <label>Subnetwork Index</label>
+                <input type="number" id="sbi-sub-idx" value="0" min="0">
+            </div>
+            <div class="field">
+                <label>Sweep Points</label>
+                <input type="number" id="sbi-n-sweep" value="30" min="5" max="500">
+            </div>
+            <div class="field">
+                <label>Steps per Point</label>
+                <input type="number" id="sbi-n-steps" value="500" min="50" max="5000">
+            </div>
+            <div class="field" style="display:flex;gap:8px">
+                <div style="flex:1"><label>Range Min</label><input type="number" id="sbi-range-min" value="-0.5" step="0.1"></div>
+                <div style="flex:1"><label>Range Max</label><input type="number" id="sbi-range-max" value="0.5" step="0.1"></div>
+            </div>
+            <div class="field">
+                <label>Feature Set</label>
+                <select id="sbi-feature-set">
+                    <option value="classic">Classic (3 stats/var)</option>
+                    <option value="catch22">Catch22 (22 features/var)</option>
+                </select>
+            </div>
+            <div class="field" style="display:flex;gap:8px">
+                <div style="flex:1"><label>MAF Epochs</label><input type="number" id="sbi-epochs" value="200" min="10" max="2000"></div>
+                <div style="flex:1"><label>Batch Size</label><input type="number" id="sbi-batch-size" value="5" min="1" max="100"></div>
+            </div>
+            <div class="field">
+                <label>Posterior Samples</label>
+                <input type="number" id="sbi-post-samples" value="100" min="10" max="5000">
+            </div>
+
+            <div class="btn-group">
+                <button class="btn btn-primary" id="btn-sbi-run">⚡ Run SBI</button>
+                <span id="sbi-status" style="font-size:11px;color:var(--text-muted)"></span>
+            </div>
         </div>
 
         <div class="viz-panel">
-            <div class="viz-toolbar">
-                <span class="stat">Step: <b id="stat-step">0</b></span>
-                <span class="stat">Time: <b id="stat-time">0.0</b> ms</span>
-                <span class="stat">Trajectory: <b id="stat-traj">0</b> pts</span>
-                <span class="stat">FPS: <b id="stat-fps">0</b></span>
+            <div id="viz-tabs">
+                <button class="tab-btn active" data-tab="traj">Trajectory</button>
+                <button class="tab-btn" data-tab="sbi">SBI Report</button>
             </div>
-            <canvas id="canvas"></canvas>
+            <div id="viz-traj-content">
+                <div class="viz-toolbar">
+                    <span class="stat">Step: <b id="stat-step">0</b></span>
+                    <span class="stat">Time: <b id="stat-time">0.0</b> ms</span>
+                    <span class="stat">Trajectory: <b id="stat-traj">0</b> pts</span>
+                    <span class="stat">FPS: <b id="stat-fps">0</b></span>
+                </div>
+                <canvas id="canvas"></canvas>
+            </div>
+            <div id="viz-sbi-content" style="display:none;flex:1;overflow-y:auto;padding:16px">
+                <div id="sbi-diagnostics"></div>
+                <canvas id="sbi-canvas" style="flex:1;display:block;margin-top:12px"></canvas>
+            </div>
             <div class="status">
                 <span id="status-msg">Ready</span>
                 <span id="status-engine">No engine</span>
@@ -334,6 +425,7 @@
             list_presets,
             get_preset,
             init_logger,
+            run_sbi_json_cfg,
         } from './pkg/hyburn.js';
 
         // ---- State ----
@@ -628,6 +720,195 @@
             } else {
                 document.getElementById('status-msg').textContent = 'Invalid: ' + err;
                 document.getElementById('status-msg').className = 'err';
+            }
+        });
+
+        // ---- Tab switching ----
+        document.querySelectorAll('.tab-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                const tab = btn.dataset.tab;
+                document.getElementById('viz-traj-content').style.display = tab === 'traj' ? '' : 'none';
+                document.getElementById('viz-sbi-content').style.display = tab === 'sbi' ? 'flex' : 'none';
+                if (tab === 'sbi') resizeSbiCanvas();
+            });
+        });
+
+        // ---- SBI Canvas ----
+        const sbiCanvas = document.getElementById('sbi-canvas');
+        const sbiCtx = sbiCanvas.getContext('2d');
+
+        function resizeSbiCanvas() {
+            const parent = sbiCanvas.parentElement;
+            if (!parent || parent.style.display === 'none') return;
+            const rect = parent.getBoundingClientRect();
+            sbiCanvas.width = rect.width * devicePixelRatio;
+            sbiCanvas.height = rect.height * devicePixelRatio;
+            sbiCanvas.style.width = rect.width + 'px';
+            sbiCanvas.style.height = rect.height + 'px';
+            sbiCtx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+        }
+
+        // ---- Draw SBI Results ----
+        function drawSbiResults(result) {
+            resizeSbiCanvas();
+            const w = sbiCanvas.width / devicePixelRatio;
+            const h = sbiCanvas.height / devicePixelRatio;
+            sbiCtx.clearRect(0, 0, w, h);
+
+            // --- Top half: Loss curve ---
+            const topH = h * 0.45;
+            const margin = { top: 20, right: 20, bottom: 30, left: 60 };
+            const plotW = w - margin.left - margin.right;
+            const plotH = topH - margin.top - margin.bottom;
+
+            // Grid
+            sbiCtx.strokeStyle = '#30363d'; sbiCtx.lineWidth = 0.5;
+            for (let i = 0; i <= 4; i++) {
+                const y = margin.top + (plotH * i / 4);
+                sbiCtx.beginPath(); sbiCtx.moveTo(margin.left, y); sbiCtx.lineTo(w - margin.right, y); sbiCtx.stroke();
+            }
+            for (let i = 0; i <= 8; i++) {
+                const x = margin.left + (plotW * i / 8);
+                sbiCtx.beginPath(); sbiCtx.moveTo(x, margin.top); sbiCtx.lineTo(x, margin.top + plotH); sbiCtx.stroke();
+            }
+
+            if (result.loss_history && result.loss_history.length > 0) {
+                const losses = result.loss_history;
+                let lmin = Infinity, lmax = -Infinity;
+                for (const [ep, loss] of losses) { if (loss < lmin) lmin = loss; if (loss > lmax) lmax = loss; }
+                const lRange = lmax - lmin || 1.0;
+
+                sbiCtx.strokeStyle = '#58a6ff'; sbiCtx.lineWidth = 1.5; sbiCtx.beginPath();
+                for (let i = 0; i < losses.length; i++) {
+                    const [ep, loss] = losses[i];
+                    const x = margin.left + (i / (losses.length - 1)) * plotW;
+                    const y = margin.top + plotH - ((loss - lmin) / lRange) * plotH;
+                    if (i === 0) sbiCtx.moveTo(x, y); else sbiCtx.lineTo(x, y);
+                }
+                sbiCtx.stroke();
+
+                sbiCtx.fillStyle = '#8b949e'; sbiCtx.font = '11px sans-serif';
+                sbiCtx.fillText('Training Loss', margin.left + 5, margin.top - 5);
+                sbiCtx.fillText(`Epochs: ${losses.length}`, w - margin.right - 80, margin.top - 5);
+            }
+
+            // --- Bottom half: Posterior scatter ---
+            const botY = topH;
+            const botH = h - topH;
+            const pMargin = { top: 16, right: 20, bottom: 30, left: 60 };
+            const pW = w - pMargin.left - pMargin.right;
+            const pH = botH - pMargin.top - pMargin.bottom;
+
+            sbiCtx.strokeStyle = '#30363d'; sbiCtx.lineWidth = 0.5;
+            for (let i = 0; i <= 4; i++) {
+                const y = botY + pMargin.top + (pH * i / 4);
+                sbiCtx.beginPath(); sbiCtx.moveTo(pMargin.left, y); sbiCtx.lineTo(w - pMargin.right, y); sbiCtx.stroke();
+            }
+
+            if (result.posterior_stats && result.posterior_stats.length > 0) {
+                let tmin = Infinity, tmax = -Infinity, pmin = Infinity, pmax = -Infinity;
+                for (const [tp, pm, ps] of result.posterior_stats) {
+                    if (tp < tmin) tmin = tp; if (tp > tmax) tmax = tp;
+                    const lo = pm - ps, hi = pm + ps;
+                    if (lo < pmin) pmin = lo; if (hi > pmax) pmax = hi;
+                }
+                const tRange = tmax - tmin || 1.0;
+                const pRange = pmax - pmin || 1.0;
+
+                // Identity line
+                sbiCtx.strokeStyle = '#8b949e'; sbiCtx.lineWidth = 1;
+                sbiCtx.setLineDash([4, 4]); sbiCtx.beginPath();
+                const idX0 = pMargin.left, idX1 = w - pMargin.right;
+                const idY0 = botY + pMargin.top + pH - ((tmin - pmin) / pRange) * pH;
+                const idY1 = botY + pMargin.top + pH - ((tmax - pmin) / pRange) * pH;
+                sbiCtx.moveTo(idX0, idY0); sbiCtx.lineTo(idX1, idY1); sbiCtx.stroke();
+                sbiCtx.setLineDash([]);
+
+                for (const [tp, pm, ps] of result.posterior_stats) {
+                    const px = pMargin.left + ((tp - tmin) / tRange) * pW;
+                    const py = botY + pMargin.top + pH - ((pm - pmin) / pRange) * pH;
+                    const std_h = ps / pRange * pH;
+                    sbiCtx.fillStyle = 'rgba(88,166,255,0.5)';
+                    sbiCtx.beginPath(); sbiCtx.arc(px, py, 4, 0, Math.PI * 2); sbiCtx.fill();
+                    sbiCtx.strokeStyle = '#58a6ff'; sbiCtx.lineWidth = 1;
+                    sbiCtx.beginPath(); sbiCtx.moveTo(px, py - std_h); sbiCtx.lineTo(px, py + std_h); sbiCtx.stroke();
+                }
+
+                sbiCtx.fillStyle = '#8b949e'; sbiCtx.font = '11px sans-serif';
+                sbiCtx.fillText('Posterior Mean vs True Param', pMargin.left + 5, botY + pMargin.top - 3);
+            }
+
+            // --- Diagnostics text ---
+            const diag = document.getElementById('sbi-diagnostics');
+            if (result.diagnostics) {
+                const d = result.diagnostics;
+                const zClass = d.mean_z_score < 1.0 ? 'good' : d.mean_z_score < 2.0 ? 'warn' : 'bad';
+                const sClass = d.mean_shrinkage > 0.5 ? 'good' : d.mean_shrinkage > 0.0 ? 'warn' : 'bad';
+                diag.innerHTML = `
+                    <div><b>Diagnostics</b></div>
+                    <div style="margin-top:4px">
+                        Mean Z-score: <span class="sbi-badge ${zClass}">${d.mean_z_score.toFixed(3)}</span>
+                        &nbsp; Shrinkage: <span class="sbi-badge ${sClass}">${d.mean_shrinkage.toFixed(3)}</span>
+                        &nbsp; Calibrated: <span class="sbi-badge ${d.well_calibrated ? 'good' : 'bad'}">${d.well_calibrated ? 'YES' : 'NO'}</span>
+                    </div>
+                    <table style="margin-top:8px">
+                        <thead><tr><th>Param</th><th>Z-score</th><th>Shrinkage</th><th>Post Mean</th><th>Post Std</th><th>Quality</th></tr></thead>
+                        <tbody>${d.per_param_z_score.map((z,i) => {
+                            const s = d.per_param_shrinkage[i];
+                            const q = z < 1.0 && s > 0.5 ? 'good' : z < 2.0 && s > 0.0 ? 'warn' : 'bad';
+                            const pm = result.posterior_stats[i]?.[1]?.toFixed(4) ?? '?';
+                            const ps = result.posterior_stats[i]?.[2]?.toFixed(4) ?? '?';
+                            return `<tr><td>${i}</td><td>${z.toFixed(3)}</td><td>${s.toFixed(3)}</td><td>${pm}</td><td>${ps}</td><td><span class='sbi-badge ${q}'>${q}</span></td></tr>`;
+                        }).join('')}</tbody>
+                    </table>`;
+            } else {
+                diag.textContent = 'No diagnostics available';
+            }
+        }
+
+        // ---- Run SBI ----
+        document.getElementById('btn-sbi-run').addEventListener('click', async () => {
+            const status = document.getElementById('sbi-status');
+            status.textContent = 'Running...';
+            status.style.color = 'var(--text-muted)';
+
+            const jsonCfg = document.getElementById('json-config').value.trim();
+            const config = jsonCfg || JSON.stringify(buildConfig());
+            const paramName = document.getElementById('sbi-param-name').value.trim();
+            const subIdx = parseInt(document.getElementById('sbi-sub-idx').value) || 0;
+            const paramIdxStr = paramName.match(/^\d+$/) ? paramName : `subnetworks[${subIdx}].params[${paramName}]`;
+
+            try {
+                const resultJson = run_sbi_json_cfg(
+                    config,
+                    parseInt(document.getElementById('sbi-n-sweep').value),
+                    parseInt(document.getElementById('sbi-n-steps').value),
+                    parseInt(document.getElementById('sbi-epochs').value),
+                    parseInt(document.getElementById('sbi-batch-size').value),
+                    parseInt(document.getElementById('sbi-post-samples').value),
+                    paramIdxStr,
+                    parseFloat(document.getElementById('sbi-range-min').value),
+                    parseFloat(document.getElementById('sbi-range-max').value),
+                    document.getElementById('sbi-feature-set').value,
+                );
+                const result = JSON.parse(resultJson);
+                drawSbiResults(result);
+
+                // Switch to SBI tab
+                document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+                document.querySelector('.tab-btn[data-tab="sbi"]').classList.add('active');
+                document.getElementById('viz-traj-content').style.display = 'none';
+                document.getElementById('viz-sbi-content').style.display = 'flex';
+                resizeSbiCanvas();
+
+                status.textContent = `Done (${result.loss_history?.length ?? 0} epochs, ${result.sweep_values?.length ?? 0} sweep pts)`;
+                status.style.color = 'var(--green)';
+            } catch (e) {
+                status.textContent = 'Error: ' + e;
+                status.style.color = 'var(--red)';
+                console.error(e);
             }
         });
 

@@ -410,19 +410,8 @@ export function model_registry_json() {
 }
 
 /**
- * Run a small SBI pipeline and return results as a JSON string.
- *
- * This is intended for small demo problems (few nodes, short simulation).
- * For realistic-scale SBI, use a server-side pipeline.
- *
- * # Arguments
- * * `config_json` - JSON string matching `SimConfig` schema
- * * `n_sweep` - Number of parameter sweep points
- * * `n_steps` - Simulation steps per sweep point
- * * `n_epochs` - MAF training epochs
- * * `batch_size` - MAF training batch size
- * * `n_post_samples` - Number of posterior samples per test point
- * * `param_idx` - Parameter index to sweep (default: 1 = I_ext for G2DO)
+ * Run a small SBI pipeline (legacy wrapper — calls `run_sbi_json_cfg`
+ * with default range [-0.5, 0.5] and Classic feature set).
  * @param {string} config_json
  * @param {number} n_sweep
  * @param {number} n_steps
@@ -450,6 +439,62 @@ export function run_sbi_json(config_json, n_sweep, n_steps, n_epochs, batch_size
         return getStringFromWasm0(ptr2, len2);
     } finally {
         wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * Run a full SBI pipeline in the browser and return results as JSON.
+ *
+ * Uses `BatchHybridEngine` for the sweep (all points in one batch-dim
+ * engine) instead of the old per-point `HybridEngine` loop. Removes
+ * hardcoded G2DO/Euler/dt=0.1 assumptions — reads model, integrator,
+ * dt, and initial state from the config.
+ *
+ * # Arguments
+ * * `config_json` - SimConfig JSON string
+ * * `n_sweep` - number of sweep points
+ * * `n_steps` - simulation steps per point
+ * * `n_epochs` - MAF training epochs
+ * * `batch_size` - MAF training batch size
+ * * `n_post_samples` - posterior samples per test point
+ * * `param_name` - sweep parameter name like "I_ext" or "subnetworks[0].params[1]"
+ *   (or numeric param_idx like "1" for backward compat)
+ * * `range_min`, `range_max` - sweep value range
+ * * `feature_set` - "classic" (3 stats) or "catch22" (22 features)
+ * @param {string} config_json
+ * @param {number} n_sweep
+ * @param {number} n_steps
+ * @param {number} n_epochs
+ * @param {number} batch_size
+ * @param {number} n_post_samples
+ * @param {string} param_name
+ * @param {number} range_min
+ * @param {number} range_max
+ * @param {string} feature_set
+ * @returns {string}
+ */
+export function run_sbi_json_cfg(config_json, n_sweep, n_steps, n_epochs, batch_size, n_post_samples, param_name, range_min, range_max, feature_set) {
+    let deferred5_0;
+    let deferred5_1;
+    try {
+        const ptr0 = passStringToWasm0(config_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(param_name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(feature_set, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ret = wasm.run_sbi_json_cfg(ptr0, len0, n_sweep, n_steps, n_epochs, batch_size, n_post_samples, ptr1, len1, range_min, range_max, ptr2, len2);
+        var ptr4 = ret[0];
+        var len4 = ret[1];
+        if (ret[3]) {
+            ptr4 = 0; len4 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred5_0 = ptr4;
+        deferred5_1 = len4;
+        return getStringFromWasm0(ptr4, len4);
+    } finally {
+        wasm.__wbindgen_free(deferred5_0, deferred5_1, 1);
     }
 }
 

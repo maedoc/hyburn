@@ -1,10 +1,9 @@
 # hyburn
 
-Burn-based GPU hybrid neural mass simulator with simulation-based inference (SBI).
-
-## What it does
-
-Hyburn simulates whole-brain neural mass models on GPU (CUDA/WGPU) or CPU (NdArray), runs parameter sweeps, extracts time-series features, and trains Masked Autoregressive Flows (MAF) for simulation-based inference — all from a single Rust binary.
+Hyburn simulates whole-brain neural mass models on GPU (CUDA/WGPU) or CPU
+(NdArray), runs parameter sweeps, extracts time-series features, and trains
+Masked Autoregressive Flows (MAF) for simulation-based inference — all from a
+single Rust binary or wasm-based web app.
 
 ## Quick start
 
@@ -40,6 +39,57 @@ cargo build --release --features wgpu    # Vulkan (cross-platform GPU)
   -c examples/demo.toml -p examples/pipeline_prior.toml \
   -o output/pipeline
 ```
+
+### SBI diagnostic report
+
+Generate a self-contained HTML report with training loss curves, z-score and shrinkage diagnostics, and posterior validation plots:
+
+```bash
+./target/release/hyburn sbi-report \
+  -c examples/demo.toml \
+  -o sbi-report.html \
+  --n-sweep 20 --steps 500 --epochs 200 --n-post-samples 100
+```
+
+With a custom prior:
+
+```bash
+./target/release/hyburn sbi-report \
+  -c examples/demo.toml -o sbi-report.html \
+  --prior examples/pipeline_prior.toml
+```
+
+The report is a single HTML file with all plots embedded as inline SVG — no external dependencies. See [sample report](docs/sbi-report-sample.html).
+
+**Input TOML** (`examples/demo.toml`):
+
+```toml
+sim_length = 1000.0
+dt = 0.1
+integrator = "heun"
+nsig = 0.0
+
+[network]
+
+[[network.subnetworks]]
+model = "Generic2dOscillator"
+nnodes = 74
+nmodes = 1
+params = [1.0, 0.0, -2.0, -10.0, 0.0, 0.02, 3.0, 1.0, 0.0, 1.0, 1.0, 1.0]
+initial_state = "examples/init_g2do_74.npy"
+
+[[network.projections]]
+src = 0
+tgt = 0
+conn_type = "all_to_all"
+coupling_fn = "Linear"
+coupling_params = [0.01]
+weights = 0.01
+cvar_map = "0:0"
+delays = []
+```
+
+**Report sections**: reproducibility metadata, TOML config display, MAF configuration, training loss curve, z-score/shrinkage bar charts with thresholds, posterior-vs-true scatter plot with error bars.
 
 ## Neural mass models
 
