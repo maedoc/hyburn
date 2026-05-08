@@ -23,6 +23,8 @@ type B = NdArray<f32>;
 pub struct ReportConfig {
     /// Path to TOML simulation config (for display)
     pub config_path: String,
+    /// Compute backend used
+    pub backend: String,
     /// Number of sweep points
     pub n_sweep: usize,
     /// Number of simulation steps per sweep point
@@ -47,6 +49,7 @@ impl Default for ReportConfig {
     fn default() -> Self {
         Self {
             config_path: String::new(),
+            backend: "ndarray".to_string(),
             n_sweep: 20,
             n_steps: 500,
             nnodes: 2,
@@ -230,7 +233,7 @@ pub fn generate_report(cfg: ReportConfig) -> anyhow::Result<String> {
             { "(browser)".to_string() }
         },
         timestamp: chrono_now(),
-        rust_info: "Rust (Burn NdArray backend)".to_string(),
+        rust_info: format!("Rust (Burn {} backend)", cfg.backend),
         sweep_values,
         loss_history,
         diagnostics,

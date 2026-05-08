@@ -90,6 +90,10 @@ pub enum Command {
         #[arg(short, long, default_value = "sbi-report.html")]
         output: String,
 
+        /// Compute backend (NdArray only; WGPU autodiff not yet available).
+        #[arg(short, long, default_value = "ndarray")]
+        backend: String,
+
         /// Number of sweep points.
         #[arg(long, default_value = "20")]
         n_sweep: usize,
@@ -189,13 +193,14 @@ impl Cli {
             Command::SbiReport {
                 config,
                 output,
+                backend,
                 n_sweep,
                 steps,
                 n_post_samples,
                 epochs,
                 batch_size,
                 prior,
-            } => sbi_report_cmd(&config, &output, n_sweep, steps, n_post_samples, epochs, batch_size, prior.as_deref(),
+            } => sbi_report_cmd(&config, &output, &backend, n_sweep, steps, n_post_samples, epochs, batch_size, prior.as_deref(),
             ),
             Command::Autotune { config } => autotune_cmd(&config),
             Command::Pipeline { config, pipeline, output, backend } => {
@@ -1030,6 +1035,8 @@ pub struct SbiReportConfig<'a> {
     pub config: &'a str,
     /// Output directory for the report.
     pub output: &'a str,
+    /// Compute backend name.
+    pub backend: &'a str,
     /// Number of sweep points.
     pub n_sweep: usize,
     /// Number of simulation steps.
@@ -1071,6 +1078,7 @@ fn sbi_report_cmd_with_config(config: SbiReportConfig) -> anyhow::Result<()> {
 
     let report_cfg = ReportConfig {
         config_path: config.config.to_string(),
+        backend: select_backend(config.backend).to_string(),
         n_sweep: config.n_sweep,
         n_steps: config.steps,
         n_post_samples: config.n_post_samples,
@@ -1090,6 +1098,7 @@ fn sbi_report_cmd_with_config(config: SbiReportConfig) -> anyhow::Result<()> {
 fn sbi_report_cmd(
     config: &str,
     output: &str,
+    backend: &str,
     n_sweep: usize,
     steps: usize,
     n_post_samples: usize,
@@ -1100,6 +1109,7 @@ fn sbi_report_cmd(
     sbi_report_cmd_with_config(SbiReportConfig {
         config,
         output,
+        backend,
         n_sweep,
         steps,
         n_post_samples,

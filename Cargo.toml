@@ -25,29 +25,9 @@ required-features = ["cli"]
 path = "src/bin/hyburn_validate_accuracy.rs"
 
 [[bin]]
-name = "hyburn-bench-generic-cuda"
-required-features = ["cli"]
-path = "src/bin/hyburn_bench_generic_cuda.rs"
-
-[[bin]]
 name = "hyburn-bench-batch-generic"
 required-features = ["cli", "wgpu"]
 path = "src/bin/hyburn_bench_batch_generic.rs"
-
-[[bin]]
-name = "hyburn-bench-batch-sweep"
-required-features = ["cli"]
-path = "src/bin/hyburn_bench_batch_sweep.rs"
-
-[[bin]]
-name = "hyburn-bench-gpu"
-path = "src/bin/hyburn_bench_gpu.rs"
-required-features = ["cli"]
-
-[[bin]]
-name = "hyburn-bench-gpu-mini"
-required-features = ["cli"]
-path = "src/bin/hyburn_bench_gpu_mini.rs"
 
 [dependencies]
 # Burn framework — core (no 'train' feature by default; 'train' pulls in burn-dataset
