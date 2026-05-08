@@ -547,7 +547,7 @@
         // ---- Controls ----
         function startEngine(jsonConfig) {
             try {
-                engine = new WebEngine.from_json(jsonConfig);
+                engine = new WebEngine(jsonConfig);
                 const info = engine.info();
                 document.getElementById('status-engine').textContent =
                     `${info.nvar}var × ${info.nnodes}nodes × ${info.nmodes}modes | dt=${engine.dt()}`;

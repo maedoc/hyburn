@@ -82,10 +82,40 @@ jobs:
           name: hyburn-x86_64-unknown-linux-gnu
           path: target/release/hyburn
 
+  wasm-e2e:
+    name: WASM E2E (Playwright)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Install wasm-pack
+        run: cargo install wasm-pack
+      - name: Install Python deps
+        run: pip install numpy tomli
+      - name: Generate presets
+        run: python3 scripts/gen_presets.py
+      - name: Build WASM
+        run: wasm-pack build --target web --no-default-features --features wasm
+      - name: Assemble web directory
+        run: |
+          mkdir -p web/pkg
+          cp pkg/* web/pkg/
+      - name: Install Node.js dependencies
+        working-directory: web
+        run: npm install
+      - name: Install Playwright browsers
+        working-directory: web
+        run: npx playwright install --with-deps chromium
+      - name: Run E2E tests
+        working-directory: web
+        run: npx playwright test --reporter=list
+
   release:
     name: Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [test, test-macos, build-macos, build-linux]
+    needs: [test, test-macos, wasm-e2e, build-macos, build-linux]
     runs-on: ubuntu-latest
     permissions:
       contents: write
