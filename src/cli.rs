@@ -489,8 +489,8 @@ fn finish_pipeline_maf(
 ) -> anyhow::Result<()> {
     use crate::sbi::MafConfig;
 
-    let feature_dim = if n_samples > 0 { all_features.len() / n_samples } else { 0 };
-    let param_dim = if n_samples > 0 { all_params.len() / n_samples } else { 0 };
+    let feature_dim = all_features.len().checked_div(n_samples).unwrap_or(0);
+    let param_dim = all_params.len().checked_div(n_samples).unwrap_or(0);
     log::info!("Extracted features: {} points, feature_dim={}", n_samples, feature_dim);
 
     let maf_config = MafConfig {
