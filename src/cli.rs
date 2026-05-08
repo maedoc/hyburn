@@ -412,7 +412,7 @@ fn pipeline_cmd(
             all_features.extend(features);
         }
 
-        let feature_dim = if n_samples > 0 { all_features.len() / n_samples } else { 0 };
+        let feature_dim = all_features.len().checked_div(n_samples).unwrap_or(0);
         log::info!("Extracted features: {} points, feature_dim={}", n_samples, feature_dim);
 
         let maf_config = MafConfig {
