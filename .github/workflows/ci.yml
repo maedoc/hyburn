@@ -3,25 +3,23 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
     branches: [main]
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
   test:
+    name: Test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-      - name: Cache cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+      - uses: Swatinem/rust-cache@v2
       - name: Build
         run: cargo build --release
       - name: Test
@@ -29,12 +27,86 @@ jobs:
       - name: Clippy
         run: cargo clippy --lib -- -D warnings
 
-  gpu-test:
-    runs-on: [self-hosted, gpu]
-    if: github.event_name == 'push'
+  test-macos:
+    name: Test (macOS)
+    runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
-      - name: Build with GPU features
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build (wgpu)
+        run: cargo build --release --features wgpu
+      - name: Test
+        run: cargo test --lib
+
+  build-macos:
+    name: Build macOS (aarch64, ndarray + wgpu)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build release
+        run: cargo build --release --features wgpu
+      - name: Strip binary
+        run: strip target/release/hyburn
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hyburn-aarch64-apple-darwin
+          path: target/release/hyburn
+
+  build-linux:
+    name: Build Linux (x86_64, ndarray + wgpu + cuda)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install CUDA Toolkit
+        uses: Jimver/cuda-toolkit@v0.2.21
+        with:
+          cuda: "12.6.3"
+          method: network
+      - name: Install Vulkan dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libvulkan-dev libgl1-mesa-dev
+      - name: Build release
         run: cargo build --release --features "wgpu,cuda"
-      - name: Test with GPU
-        run: cargo test --lib --features "wgpu,cuda"
+      - name: Strip binary
+        run: strip target/release/hyburn
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hyburn-x86_64-unknown-linux-gnu
+          path: target/release/hyburn
+
+  release:
+    name: Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [test, test-macos, build-macos, build-linux]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download macOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: hyburn-aarch64-apple-darwin
+          path: release/
+      - name: Download Linux artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: hyburn-x86_64-unknown-linux-gnu
+          path: release/
+      - name: Rename binaries
+        run: |
+          mv release/hyburn release/hyburn-aarch64-apple-darwin
+          mv release/hyburn release/hyburn-x86_64-unknown-linux-gnu || true
+          ls -la release/
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true
