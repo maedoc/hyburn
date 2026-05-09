@@ -314,16 +314,41 @@ pub fn model_registry_json() -> String {
 /// Get the default parameters for a model as a JSON string.
 #[wasm_bindgen]
 pub fn model_default_params(model_name: &str) -> Result<String, JsValue> {
-    match model_name {
-        "Generic2dOscillator" => {
-            let params = crate::model::g2do::g2do_default_params();
-            Ok(serde_json::to_string(&params).unwrap())
-        }
-        _ => Err(JsValue::from_str(&format!(
-            "Default params not available for '{}'. Known models: Generic2dOscillator, MontbrioPazoRoxin, ReducedWongWang, Kuramoto, JansenRit, WilsonCowan",
+    let params: Vec<f32> = match model_name {
+        "Generic2dOscillator" => crate::model::g2do::g2do_default_params(),
+        "MontbrioPazoRoxin" => crate::model::mpr::mpr_default_params(),
+        "ReducedWongWang" => crate::model::rww::rww_default_params(),
+        "Kuramoto" => crate::model::kuramoto_model::kuramoto_default_params(),
+        "JansenRit" => crate::model::jansen_rit::jansen_rit_default_params(),
+        "WilsonCowan" => crate::model::wilson_cowan::wilson_cowan_default_params(),
+        "Linear" => crate::model::linear::linear_default_params(),
+        "SupHopf" => crate::model::sup_hopf::sup_hopf_default_params(),
+        "Hopfield" => crate::model::hopfield::hopfield_default_params(),
+        "CoombesByrne2D" => crate::model::coombes_byrne2d::coombes_byrne2d_default_params(),
+        "CoombesByrne" => crate::model::coombes_byrne::coombes_byrne_default_params(),
+        "GastSchmidtKnoscheSD" => crate::model::gast_schmidt_knosche_sd::gast_sd_default_params(),
+        "GastSchmidtKnoscheSF" => crate::model::gast_schmidt_knosche_sf::gast_sf_default_params(),
+        "LarterBreakspear" => crate::model::larter_breakspear::larter_breakspear_default_params(),
+        "Epileptor2D" => crate::model::epileptor2d::epileptor2d_default_params(),
+        "Epileptor" => crate::model::epileptor::epileptor_default_params(),
+        "ReducedWongWangExcInh" => crate::model::rww_exc_inh::rww_exc_inh_default_params(),
+        "DecoBalancedExcInh" => crate::model::deco_balanced_exc_inh::deco_balanced_exc_inh_default_params(),
+        "EpileptorCodim3" => crate::model::epileptor_codim3::epileptor_codim3_default_params(),
+        "EpileptorCodim3SlowMod" => crate::model::epileptor_codim3_slowmod::epileptor_codim3_slowmod_default_params(),
+        "EpileptorRestingState" => crate::model::epileptor_rs::epileptor_rs_default_params(),
+        "ZetterbergJansen" => crate::model::zetterberg_jansen::zetterberg_jansen_default_params(),
+        "ReducedSetFitzHughNagumo" => crate::model::reduced_fhn::reduced_fhn_default_params(),
+        "ReducedSetHindmarshRose" => crate::model::reduced_hr::reduced_hr_default_params(),
+        "DumontGutkin" => crate::model::dumont_gutkin::dumont_gutkin_default_params(),
+        "ZerlautAdaptationFirstOrder" => crate::model::zerlaut_first::zerlaut_first_default_params(),
+        "ZerlautAdaptationSecondOrder" => crate::model::zerlaut_second::zerlaut_second_default_params(),
+        "KIonEx" => crate::model::kionex::kionex_default_params(),
+        _ => return Err(JsValue::from_str(&format!(
+            "Default params not available for '{}'. Known models: Generic2dOscillator, MontbrioPazoRoxin, ReducedWongWang, Kuramoto, JansenRit, WilsonCowan, Linear, SupHopf, Hopfield, CoombesByrne2D, CoombesByrne, GastSchmidtKnoscheSD, GastSchmidtKnoscheSF, LarterBreakspear, Epileptor2D, Epileptor, ReducedWongWangExcInh, DecoBalancedExcInh, EpileptorCodim3, EpileptorCodim3SlowMod, EpileptorRestingState, ZetterbergJansen, ReducedSetFitzHughNagumo, ReducedSetHindmarshRose, DumontGutkin, ZerlautAdaptationFirstOrder, ZerlautAdaptationSecondOrder, KIonEx",
             model_name
         ))),
-    }
+    };
+    Ok(serde_json::to_string(&params).unwrap())
 }
 
 // ---------------------------------------------------------------------------

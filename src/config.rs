@@ -8,13 +8,34 @@ use crate::error::{Result, SimulationError};
 ///
 /// Used for config validation and parameter sizing.
 pub const MODEL_REGISTRY: &[(&str, usize, usize, usize)] = &[
-    // (name, nvar, ncvar, nparams)
     ("Generic2dOscillator", 2, 1, 12),
     ("MontbrioPazoRoxin",     2, 2, 7),
     ("ReducedWongWang",      1, 1, 8),
     ("Kuramoto",             1, 1, 1),
     ("JansenRit",           6, 1, 13),
     ("WilsonCowan",          2, 1, 22),
+    ("Linear",               1, 1, 1),
+    ("SupHopf",              2, 2, 2),
+    ("Hopfield",             2, 2, 3),
+    ("CoombesByrne2D",       2, 2, 4),
+    ("CoombesByrne",         4, 4, 5),
+    ("GastSchmidtKnoscheSD",  4, 4, 9),
+    ("GastSchmidtKnoscheSF",  4, 4, 9),
+    ("LarterBreakspear",     3, 1, 32),
+    ("Epileptor2D",          2, 1, 12),
+    ("Epileptor",            6, 2, 17),
+    ("ReducedWongWangExcInh", 2, 1, 19),
+    ("DecoBalancedExcInh",    2, 1, 20),
+    ("EpileptorCodim3",      3, 1, 13),
+    ("EpileptorCodim3SlowMod", 5, 1, 27),
+    ("EpileptorRestingState", 8, 3, 28),
+    ("ZetterbergJansen",     12, 1, 18),
+    ("ReducedSetFitzHughNagumo", 4, 2, 8),
+    ("ReducedSetHindmarshRose", 6, 2, 12),
+    ("DumontGutkin",         8, 4, 14),
+    ("ZerlautAdaptationFirstOrder", 5, 1, 50),
+    ("ZerlautAdaptationSecondOrder", 8, 1, 50),
+    ("KIonEx",               5, 1, 14),
 ];
 
 /// Look up a model in the registry by name.

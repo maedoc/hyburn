@@ -4,6 +4,28 @@ pub mod rww;
 pub mod kuramoto_model;
 pub mod jansen_rit;
 pub mod wilson_cowan;
+pub mod linear;
+pub mod sup_hopf;
+pub mod hopfield;
+pub mod coombes_byrne2d;
+pub mod coombes_byrne;
+pub mod gast_schmidt_knosche_sd;
+pub mod gast_schmidt_knosche_sf;
+pub mod larter_breakspear;
+pub mod epileptor2d;
+pub mod epileptor;
+pub mod rww_exc_inh;
+pub mod deco_balanced_exc_inh;
+pub mod epileptor_codim3;
+pub mod epileptor_codim3_slowmod;
+pub mod epileptor_rs;
+pub mod zetterberg_jansen;
+pub mod reduced_fhn;
+pub mod reduced_hr;
+pub mod dumont_gutkin;
+pub mod zerlaut_first;
+pub mod zerlaut_second;
+pub mod kionex;
 
 use burn::prelude::Backend;
 
