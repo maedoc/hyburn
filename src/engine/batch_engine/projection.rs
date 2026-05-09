@@ -6,13 +6,15 @@
 use burn::prelude::Backend;
 use burn::tensor::Tensor;
 
-/// Pre-computed projection with weight tensor materialized once.
+use crate::engine::coupling::CouplingFnConfig;
+
 pub(crate) struct PrecomputedProjection<B: Backend> {
     pub src: usize,
     pub tgt: usize,
     pub delay: u32,
     pub cvar_map: Vec<(usize, usize)>,
     pub weight_kind: ProjectionWeightKind<B>,
+    pub coupling_fn: CouplingFnConfig,
 }
 
 pub(crate) enum ProjectionWeightKind<B: Backend> {

@@ -630,26 +630,11 @@ progress: None,
                 }
             };
 
-            let coupling_cfg = match proj_cfg.coupling_fn.as_str() {
-                "Linear" => {
-                    let a = proj_cfg.coupling_params.first().copied().unwrap_or(1.0);
-                    CouplingFnConfig::Linear { a }
-                }
-                "Sigmoidal" => {
-                    let cmax = proj_cfg.coupling_params.first().copied().unwrap_or(1.0);
-                    let midpoint = proj_cfg.coupling_params.get(1).copied().unwrap_or(0.0);
-                    let steepness = proj_cfg.coupling_params.get(2).copied().unwrap_or(1.0);
-                    CouplingFnConfig::Sigmoidal { cmax, midpoint, steepness }
-                }
-                "Difference" => {
-                    let a = proj_cfg.coupling_params.first().copied().unwrap_or(1.0);
-                    CouplingFnConfig::Difference { a }
-                }
-                "Kuramoto" => {
-                    let a = proj_cfg.coupling_params.first().copied().unwrap_or(1.0);
-                    CouplingFnConfig::Kuramoto { a }
-                }
-                _ => {
+            let coupling_cfg = match CouplingFnConfig::from_name_and_params(
+                &proj_cfg.coupling_fn, &proj_cfg.coupling_params
+            ) {
+                Some(cfg) => cfg,
+                None => {
                     return Err(SimulationError::InvalidConfig(
                         format!("Unknown coupling function: {}", proj_cfg.coupling_fn)
                     ));
