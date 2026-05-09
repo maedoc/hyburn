@@ -260,10 +260,117 @@ mod tests {
         let lp_after = log_prob_after.into_data().as_slice::<f32>().unwrap().to_vec();
         for (a, b) in lp_before.iter().zip(lp_after.iter()) {
             assert!(
-                (a - b).abs() < 1e-3,
-                "log_prob mismatch after save/load: {} vs {}",
-                a, b
+                (a - b).abs() < 1e-6,
+                "log_prob mismatch after save/load: {} vs {} (diff={})",
+                a, b, (a - b).abs()
             );
+        }
+    }
+
+    #[test]
+    fn test_maf_save_load_weights_match() {
+        let device = Default::default();
+        let maf = MAF::<B>::new(&device, 2, 1, 8, 2);
+
+        let tmpdir = tempfile::tempdir().unwrap();
+        let path = tmpdir.path().join("test_maf_weights").to_str().unwrap().to_string();
+
+        maf.save(&path).unwrap();
+
+        let config = MafConfig {
+            param_dim: 2,
+            feature_dim: 1,
+            hidden_units: 8,
+            n_flows: 2,
+            learning_rate: 1e-3,
+            feature_set: "classic".to_string(),
+        };
+        let maf2 = MAF::<B>::load(&path, &device, &config).unwrap();
+
+        for (i, (layer1, layer2)) in maf.layers.iter().zip(maf2.layers.iter()).enumerate() {
+            let (d1, _) = crate::io::tensor_to_flat_f32::<B, 2>(layer1.linear_y.weight.val());
+            let (d2, _) = crate::io::tensor_to_flat_f32::<B, 2>(layer2.linear_y.weight.val());
+            for (j, (a, b)) in d1.iter().zip(d2.iter()).enumerate() {
+                assert!(
+                    (a - b).abs() < 1e-6,
+                    "Layer {} linear_y weight[{}] mismatch: {} vs {} (diff={})",
+                    i, j, a, b, (a - b).abs()
+                );
+            }
+
+            let (d1, _) = crate::io::tensor_to_flat_f32::<B, 2>(layer1.linear_c.weight.val());
+            let (d2, _) = crate::io::tensor_to_flat_f32::<B, 2>(layer2.linear_c.weight.val());
+            for (j, (a, b)) in d1.iter().zip(d2.iter()).enumerate() {
+                assert!(
+                    (a - b).abs() < 1e-6,
+                    "Layer {} linear_c weight[{}] mismatch: {} vs {} (diff={})",
+                    i, j, a, b, (a - b).abs()
+                );
+            }
+
+            let (d1, _) = crate::io::tensor_to_flat_f32::<B, 2>(layer1.linear_out.weight.val());
+            let (d2, _) = crate::io::tensor_to_flat_f32::<B, 2>(layer2.linear_out.weight.val());
+            for (j, (a, b)) in d1.iter().zip(d2.iter()).enumerate() {
+                assert!(
+                    (a - b).abs() < 1e-6,
+                    "Layer {} linear_out weight[{}] mismatch: {} vs {} (diff={})",
+                    i, j, a, b, (a - b).abs()
+                );
+            }
+
+            if let Some(ref b1) = layer1.linear_out.bias {
+                if let Some(ref b2) = layer2.linear_out.bias {
+                    let (bd1, _) = crate::io::tensor_to_flat_f32::<B, 1>(b1.val());
+                    let (bd2, _) = crate::io::tensor_to_flat_f32::<B, 1>(b2.val());
+                    for (j, (a, b)) in bd1.iter().zip(bd2.iter()).enumerate() {
+                        assert!(
+                            (a - b).abs() < 1e-6,
+                            "Layer {} linear_out bias[{}] mismatch: {} vs {}",
+                            i, j, a, b
+                        );
+                    }
+                }
+            }
+
+            let (d1, _) = crate::io::tensor_to_flat_f32::<B, 2>(layer1.linear_out_c.weight.val());
+            let (d2, _) = crate::io::tensor_to_flat_f32::<B, 2>(layer2.linear_out_c.weight.val());
+            for (j, (a, b)) in d1.iter().zip(d2.iter()).enumerate() {
+                assert!(
+                    (a - b).abs() < 1e-6,
+                    "Layer {} linear_out_c weight[{}] mismatch: {} vs {} (diff={})",
+                    i, j, a, b, (a - b).abs()
+                );
+            }
+
+            let (m1, _) = crate::io::tensor_to_flat_f32::<B, 2>(layer1.mask1.val());
+            let (m2, _) = crate::io::tensor_to_flat_f32::<B, 2>(layer2.mask1.val());
+            for (j, (a, b)) in m1.iter().zip(m2.iter()).enumerate() {
+                assert!(
+                    (a - b).abs() < 1e-6,
+                    "Layer {} mask1[{}] mismatch: {} vs {}",
+                    i, j, a, b
+                );
+            }
+
+            let (m1, _) = crate::io::tensor_to_flat_f32::<B, 2>(layer1.mask2.val());
+            let (m2, _) = crate::io::tensor_to_flat_f32::<B, 2>(layer2.mask2.val());
+            for (j, (a, b)) in m1.iter().zip(m2.iter()).enumerate() {
+                assert!(
+                    (a - b).abs() < 1e-6,
+                    "Layer {} mask2[{}] mismatch: {} vs {}",
+                    i, j, a, b
+                );
+            }
+
+            let (p1, _) = crate::io::tensor_to_flat_f32::<B, 2>(layer1.perm_matrix.val());
+            let (p2, _) = crate::io::tensor_to_flat_f32::<B, 2>(layer2.perm_matrix.val());
+            for (j, (a, b)) in p1.iter().zip(p2.iter()).enumerate() {
+                assert!(
+                    (a - b).abs() < 1e-6,
+                    "Layer {} perm_matrix[{}] mismatch: {} vs {}",
+                    i, j, a, b
+                );
+            }
         }
     }
 
