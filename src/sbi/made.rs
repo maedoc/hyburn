@@ -1,5 +1,5 @@
 use burn::{
-    module::Module,
+    module::{Module, Param, ParamId},
     nn::{Initializer, Linear, LinearConfig},
     tensor::{backend::Backend, Tensor, TensorData},
 };
@@ -17,10 +17,10 @@ pub struct MADE<B: Backend> {
     pub linear_c: Linear<B>,
     pub linear_out: Linear<B>,
     pub linear_out_c: Linear<B>,
-    pub mask1: Tensor<B, 2>,
-    pub mask2: Tensor<B, 2>,
-    pub perm_matrix: Tensor<B, 2>,
-    pub inv_perm_matrix: Tensor<B, 2>,
+    pub mask1: Param<Tensor<B, 2>>,
+    pub mask2: Param<Tensor<B, 2>>,
+    pub perm_matrix: Param<Tensor<B, 2>>,
+    pub inv_perm_matrix: Param<Tensor<B, 2>>,
     pub param_dim: usize,
     pub feature_dim: usize,
     pub hidden_dim: usize,
@@ -84,10 +84,10 @@ impl<B: Backend> MADE<B> {
             linear_c,
             linear_out,
             linear_out_c,
-            mask1,
-            mask2,
-            perm_matrix,
-            inv_perm_matrix,
+            mask1: Param::initialized(ParamId::new(), mask1),
+            mask2: Param::initialized(ParamId::new(), mask2),
+            perm_matrix: Param::initialized(ParamId::new(), perm_matrix),
+            inv_perm_matrix: Param::initialized(ParamId::new(), inv_perm_matrix),
             param_dim,
             feature_dim,
             hidden_dim,
@@ -102,7 +102,7 @@ impl<B: Backend> MADE<B> {
         context: Tensor<B, 2>,
     ) -> (Tensor<B, 2>, Tensor<B, 2>) {
         // Hidden layer.
-        let w1y_masked = self.linear_y.weight.val() * self.mask1.clone();
+        let w1y_masked = self.linear_y.weight.val() * self.mask1.val();
         let mut h1 = y.matmul(w1y_masked);
 
         if self.feature_dim > 0 {
@@ -112,7 +112,7 @@ impl<B: Backend> MADE<B> {
         let h = h1.tanh();
 
         // Output layer.
-        let w2_masked = self.linear_out.weight.val() * self.mask2.clone();
+        let w2_masked = self.linear_out.weight.val() * self.mask2.val();
         let mut out = h.matmul(w2_masked);
 
         if self.feature_dim > 0 {
@@ -135,12 +135,12 @@ impl<B: Backend> MADE<B> {
 
     /// Permute the input dimensions.
     pub fn apply_perm(&self, x: Tensor<B, 2>) -> Tensor<B, 2> {
-        x.matmul(self.perm_matrix.clone())
+        x.matmul(self.perm_matrix.val())
     }
 
     /// Apply the inverse permutation.
     pub fn apply_inv_perm(&self, x: Tensor<B, 2>) -> Tensor<B, 2> {
-        x.matmul(self.inv_perm_matrix.clone())
+        x.matmul(self.inv_perm_matrix.val())
     }
 }
 
@@ -237,9 +237,8 @@ mod tests {
         let made = MADE::<B>::new(&device, param_dim, feature_dim, hidden_dim);
 
         // Verify mask1 shape: [param_dim, hidden_dim]
-        assert_eq!(made.mask1.dims(), [param_dim, hidden_dim]);
-        // Verify mask2 shape: [hidden_dim, 2 * param_dim]
-        assert_eq!(made.mask2.dims(), [hidden_dim, 2 * param_dim]);
+        assert_eq!(made.mask1.val().dims(), [param_dim, hidden_dim]);
+        assert_eq!(made.mask2.val().dims(), [hidden_dim, 2 * param_dim]);
 
         // Check that mask1 doesn't allow hidden unit j to depend on input i
         // when m_in[i] > m_h[j] (i.e., the mask correctly zeroes those connections).
@@ -299,12 +298,9 @@ mod tests {
 
         // mask1: [param_dim, hidden_dim], mask2: [hidden_dim, 2*param_dim]
         // The mu-relevant part of mask2 is the first param_dim columns
-        let mask2_mu = made.mask2.clone().narrow(1, 0, param_dim);
+        let mask2_mu = made.mask2.val().narrow(1, 0, param_dim);
 
-        // Combined connectivity: mask1.T @ mask2_mu should be lower-triangular
-        // (after permutation)
-        // For a basic check, we just verify masks are binary {0, 1}
-        let m1_data = made.mask1.into_data();
+        let m1_data = made.mask1.val().into_data();
         let m1 = m1_data.as_slice::<f32>().unwrap();
         let m2_data = mask2_mu.into_data();
         let m2 = m2_data.as_slice::<f32>().unwrap();
