@@ -1,8 +1,10 @@
 use burn::{
     module::Module,
+    record::{BinFileRecorder, FullPrecisionSettings},
     tensor::{backend::Backend, Distribution, Tensor},
 };
 
+use super::config::MafConfig;
 use super::MADE;
 
 /// Masked Autoregressive Flow (MAF).
@@ -113,6 +115,51 @@ impl<B: Backend> MAF<B> {
 
         x
     }
+
+    /// Save MAF weights to a binary file.
+    ///
+    /// Uses Burn's `BinFileRecorder` which auto-appends `.bin` to the path.
+    /// To save at `model.bin`, pass `path = "model"`.
+    pub fn save(&self, path: &str) -> anyhow::Result<()> {
+        let recorder = BinFileRecorder::<FullPrecisionSettings>::new();
+        self.clone()
+            .save_file(path, &recorder)
+            .map_err(|e| anyhow::anyhow!("MAF save failed: {}", e))?;
+        Ok(())
+    }
+
+    /// Load MAF weights from a binary file into a freshly-constructed model.
+    pub fn load(path: &str, device: &B::Device, config: &MafConfig) -> anyhow::Result<Self> {
+        let maf = MAF::new(device, config.param_dim, config.feature_dim, config.hidden_units, config.n_flows);
+        let recorder = BinFileRecorder::<FullPrecisionSettings>::new();
+        let maf = maf
+            .load_file(path, &recorder, device)
+            .map_err(|e| anyhow::anyhow!("MAF load failed: {}", e))?;
+        Ok(maf)
+    }
+
+    /// Save MAF and its config to files: `<path>.bin` + `<path>.bin.json`.
+    ///
+    /// The path passed here should NOT include the `.bin` extension
+    /// (it is auto-appended by the recorder).
+    pub fn save_with_config(&self, path: &str, config: &MafConfig) -> anyhow::Result<()> {
+        self.save(path)?;
+        let config_path = format!("{}.bin.json", path);
+        let json = serde_json::to_string_pretty(config)?;
+        std::fs::write(&config_path, json)?;
+        Ok(())
+    }
+
+    /// Load MAF from `<path>.bin`, reading config from `<path>.bin.json` sidecar.
+    pub fn load_with_config(path: &str, device: &B::Device) -> anyhow::Result<(Self, MafConfig)> {
+        let config_path = format!("{}.bin.json", path);
+        let config_str = std::fs::read_to_string(&config_path)
+            .map_err(|e| anyhow::anyhow!("Failed to read MAF config sidecar {}: {}", config_path, e))?;
+        let config: MafConfig = serde_json::from_str(&config_str)
+            .map_err(|e| anyhow::anyhow!("Failed to parse MAF config from {}: {}", config_path, e))?;
+        let maf = Self::load(path, device, &config)?;
+        Ok((maf, config))
+    }
 }
 
 #[cfg(test)]
@@ -182,5 +229,75 @@ mod tests {
         let context = Tensor::<B, 2>::zeros([4, 0], &device);
         let log_prob = maf.forward_log_prob(params, context);
         assert_eq!(log_prob.dims(), [4]);
+    }
+
+    #[test]
+    fn test_maf_save_load_roundtrip() {
+        let device = Default::default();
+        let maf = MAF::<B>::new(&device, 2, 1, 8, 2);
+        let params = Tensor::<B, 2>::zeros([4, 2], &device);
+        let context = Tensor::<B, 2>::zeros([4, 1], &device);
+        let log_prob_before = maf.forward_log_prob(params.clone(), context.clone());
+
+        let tmpdir = tempfile::tempdir().unwrap();
+        let path = tmpdir.path().join("test_maf").to_str().unwrap().to_string();
+
+        maf.save(&path).unwrap();
+
+        let config = MafConfig {
+            param_dim: 2,
+            feature_dim: 1,
+            hidden_units: 8,
+            n_flows: 2,
+            learning_rate: 1e-3,
+            feature_set: "classic".to_string(),
+        };
+        let maf2 = MAF::<B>::load(&path, &device, &config).unwrap();
+
+        let log_prob_after = maf2.forward_log_prob(params, context);
+
+        let lp_before = log_prob_before.into_data().as_slice::<f32>().unwrap().to_vec();
+        let lp_after = log_prob_after.into_data().as_slice::<f32>().unwrap().to_vec();
+        for (a, b) in lp_before.iter().zip(lp_after.iter()) {
+            assert!(
+                (a - b).abs() < 1e-5,
+                "log_prob mismatch after save/load: {} vs {}",
+                a, b
+            );
+        }
+    }
+
+    #[test]
+    fn test_maf_save_with_config_sidecar() {
+        let device = Default::default();
+        let maf = MAF::<B>::new(&device, 2, 1, 8, 2);
+
+        let tmpdir = tempfile::tempdir().unwrap();
+        let path = tmpdir.path().join("test_maf_sc").to_str().unwrap().to_string();
+
+        let config = MafConfig {
+            param_dim: 2,
+            feature_dim: 1,
+            hidden_units: 8,
+            n_flows: 2,
+            learning_rate: 1e-3,
+            feature_set: "classic".to_string(),
+        };
+
+        maf.save_with_config(&path, &config).unwrap();
+
+        assert!(tmpdir.path().join("test_maf_sc.bin").exists(), ".bin file should exist");
+        assert!(tmpdir.path().join("test_maf_sc.bin.json").exists(), ".bin.json sidecar should exist");
+
+        let (maf2, config2) = MAF::<B>::load_with_config(&path, &device).unwrap();
+
+        assert_eq!(config2.param_dim, 2);
+        assert_eq!(config2.feature_dim, 1);
+        assert_eq!(config2.hidden_units, 8);
+        assert_eq!(config2.n_flows, 2);
+
+        let params = Tensor::<B, 2>::zeros([4, 2], &device);
+        let context = Tensor::<B, 2>::zeros([4, 1], &device);
+        let _ = maf2.forward_log_prob(params, context);
     }
 }

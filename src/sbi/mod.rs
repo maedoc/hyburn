@@ -31,4 +31,4 @@ pub use features::{
 pub use made::MADE;
 pub use maf::MAF;
 pub use priors::{ParamPrior, PriorConfig, PriorDistribution};
-pub use train::{infer_maf, train_maf, train_maf_with_data, train_maf_with_data_and_log};
+pub use train::{infer_maf, infer_maf_to_file, train_maf, train_maf_with_data, train_maf_with_data_and_log, train_maf_with_output};

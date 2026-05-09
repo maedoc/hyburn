@@ -63,11 +63,15 @@ pub enum Command {
         /// Path to TOML config file.
         #[arg(short, long)]
         config: String,
+
+        /// Output path for saved model (without .bin extension).
+        #[arg(short, long, default_value = "maf_model")]
+        output: String,
     },
 
     /// Run inference with a trained SBI model.
     Infer {
-        /// Path to saved model record.
+        /// Path to saved model record (without .bin extension).
         #[arg(short, long)]
         model: String,
 
@@ -78,6 +82,10 @@ pub enum Command {
         /// Number of posterior samples.
         #[arg(short, long, default_value = "1000")]
         n_samples: usize,
+
+        /// Output path for posterior samples (.npy).
+        #[arg(short, long, default_value = "posterior.npy")]
+        output: String,
     },
 
     /// Generate a self-contained HTML SBI diagnostic report.
@@ -176,18 +184,19 @@ impl Cli {
                      These are compiled as separate binaries in `src/bin/`."
                 );
             }
-            Command::TrainSbi { config } => {
+            Command::TrainSbi { config, output } => {
                 let cfg = crate::sbi::MafConfig::from_file(config.as_str())?;
                 log::info!("Training MAF with config: {:?}", cfg);
-                crate::sbi::train_maf(&cfg)?;
+                crate::sbi::train_maf_with_output(&cfg, &output)?;
                 Ok(())
             }
             Command::Infer {
                 model,
                 features,
                 n_samples,
+                output,
             } => {
-                crate::sbi::infer_maf(model.as_str(), features.as_str(), n_samples)?;
+                crate::sbi::infer_maf_to_file(model.as_str(), features.as_str(), n_samples, &output)?;
                 Ok(())
             }
             Command::SbiReport {
@@ -436,7 +445,7 @@ fn pipeline_cmd(
         };
 
         log::info!("Training MAF: {} epochs, batch_size={}", pipe_cfg.epochs, pipe_cfg.batch_size);
-        let (_maf, loss_history) = train_maf_with_data_and_log_wrap(
+        let (maf, loss_history) = train_maf_with_data_and_log_wrap(
             &maf_config,
             all_params,
             all_features,
@@ -446,6 +455,14 @@ fn pipeline_cmd(
 
         let final_loss = loss_history.last().map(|(_, l)| *l).unwrap_or(f32::NAN);
         log::info!("MAF training complete. Final loss: {:.4}", final_loss);
+
+        let model_path = format!("{}/maf_model", output);
+        let maf_inner = burn::module::AutodiffModule::valid(&maf);
+        if let Err(e) = maf_inner.save_with_config(&model_path, &maf_config) {
+            log::warn!("Failed to save MAF model: {}", e);
+        } else {
+            log::info!("MAF model saved to {}", model_path);
+        }
 
         let loss_path = format!("{}/loss_history.csv", output);
         std::fs::write(&loss_path, loss_history.iter()
@@ -514,7 +531,7 @@ fn finish_pipeline_maf(
     };
 
     log::info!("Training MAF: {} epochs, batch_size={}", pipe_cfg.epochs, pipe_cfg.batch_size);
-    let (_maf, loss_history) = train_maf_with_data_and_log_wrap(
+    let (maf, loss_history) = train_maf_with_data_and_log_wrap(
         &maf_config,
         all_params,
         all_features,
@@ -524,6 +541,14 @@ fn finish_pipeline_maf(
 
     let final_loss = loss_history.last().map(|(_, l)| *l).unwrap_or(f32::NAN);
     log::info!("MAF training complete. Final loss: {:.4}", final_loss);
+
+    let model_path = format!("{}/maf_model", output);
+    let maf_inner = burn::module::AutodiffModule::valid(&maf);
+    if let Err(e) = maf_inner.save_with_config(&model_path, &maf_config) {
+        log::warn!("Failed to save MAF model: {}", e);
+    } else {
+        log::info!("MAF model saved to {}", model_path);
+    }
 
     let loss_path = format!("{}/loss_history.csv", output);
     std::fs::write(&loss_path, loss_history.iter()
