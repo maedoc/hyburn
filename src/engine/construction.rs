@@ -14,7 +14,7 @@ use crate::error::{Result, SimulationError};
 
 use super::coupling::CouplingFnConfig;
 use super::stimulus::StimulusApplier;
-pub use super::integrator::{IntegratorKind, euler_step, euler_stochastic_step, heun_step, heun_stochastic_step};
+pub use super::integrator::{IntegratorKind, euler_step, euler_stochastic_step, heun_step, heun_stochastic_step, rk4_step, rk4_stochastic_step};
 use super::subnetwork::Subnetwork;
 
 /// Supported engine models (dispatches to concrete `NeuralMassModel` impls).
@@ -241,8 +241,8 @@ pub struct HybridEngine<B: Backend> {
     pub stimuli: Vec<StimulusApplier>,
     /// Flat state trajectory recorded every step (all subnetworks concatenated).
     pub trajectory: Vec<f32>,
-    /// Noise amplitude for stochastic integration.
-    pub nsig: f32,
+    /// Noise amplitude per variable for stochastic integration.
+    pub nsig: Vec<f32>,
     /// Optional progress reporter.
     pub progress: Option<ProgressReporter>,
     /// Active BOLD monitors.
@@ -257,7 +257,7 @@ pub struct HybridEngine<B: Backend> {
 
 /// Checkpoint constants.
 pub const CKPT_MAGIC: &[u8; 8] = b"HYBURNCK";
-pub const CKPT_VERSION: u64 = 1;
+pub const CKPT_VERSION: u64 = 2;
 
 impl<B: Backend> HybridEngine<B> {
     /// Build a single-subnetwork engine directly (backward-compatible with Phase 0).
@@ -374,7 +374,7 @@ impl<B: Backend> HybridEngine<B> {
             projections: vec![],
             stimuli: vec![],
             trajectory: Vec::new(),
-            nsig: 0.0,
+            nsig: vec![0.0],
 progress: None,
             bold_monitors: vec![],
             bold_accumulators: vec![],
@@ -616,6 +616,10 @@ progress: None,
             }
         }
 
+        // Resolve nsig to per-variable vec using first subnetwork's nvar
+        let first_nvar = subnetworks.first().map(|s| s.nvar).unwrap_or(1);
+        let nsig_vec = cfg.nsig.to_vec(first_nvar);
+
         Ok(Self {
             subnetworks,
             states,
@@ -629,7 +633,7 @@ progress: None,
                 .map(StimulusApplier::from_config)
                 .collect::<Result<Vec<_>>>()?,
             trajectory: Vec::new(),
-            nsig: cfg.nsig,
+            nsig: nsig_vec,
             progress: None,
             bold_accumulators: vec![],
             bold_accumulator_counts: vec![0; bold_monitors.len()],

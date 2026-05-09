@@ -99,7 +99,7 @@ fn main() {
         integrator: hyburn::engine::IntegratorKind::Heun,
         monitors: vec![],
         stimuli: vec![],
-        nsig: 0.0,
+        nsig: NsigConfig::Scalar(0.0),
             backend: "ndarray".to_string(),
     };
 

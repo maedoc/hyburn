@@ -136,7 +136,7 @@ fn test_config_validation_rejects_invalid_dt() {
         integrator: IntegratorKind::Heun,
         monitors: vec![],
         stimuli: vec![],
-        nsig: 0.0,
+        nsig: crate::config::NsigConfig::Scalar(0.0),
     };
     assert!(cfg.validate().is_err(), "dt=0 should fail validation");
 }
@@ -162,7 +162,7 @@ fn test_config_validation_rejects_unknown_model() {
         integrator: IntegratorKind::Heun,
         monitors: vec![],
         stimuli: vec![],
-        nsig: 0.0,
+        nsig: crate::config::NsigConfig::Scalar(0.0),
     };
     let err = cfg.validate().unwrap_err();
     let msg = format!("{}", err);
@@ -209,7 +209,7 @@ fn test_all_models_run_without_crash() {
             integrator: hyburn::engine::integrator::IntegratorKind::Euler,
             monitors: vec![],
             stimuli: vec![],
-            nsig: 0.0,
+            nsig: crate::config::NsigConfig::Scalar(0.0),
         };
         cfg.validate().unwrap_or_else(|e| panic!("{} config should validate: {}", name, e));
 

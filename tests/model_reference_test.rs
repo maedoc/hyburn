@@ -45,7 +45,7 @@ fn run_model(model: &str, nnodes: usize, params: Vec<f32>, initial_state: Vec<f3
         sim_length: dt * n_steps as f64,
         dt,
         integrator,
-        nsig: 0.0,
+        nsig: crate::config::NsigConfig::Scalar(0.0),
         backend: "ndarray".to_string(),
         network: NetworkConfig {
             subnetworks: vec![SubnetworkConfig {
@@ -205,7 +205,7 @@ fn test_all_22_new_models_smoke() {
             integrator: IntegratorKind::Euler,
             monitors: vec![],
             stimuli: vec![],
-            nsig: 0.0,
+            nsig: crate::config::NsigConfig::Scalar(0.0),
         };
         cfg.validate().unwrap_or_else(|e| panic!("{} config: {}", name, e));
 

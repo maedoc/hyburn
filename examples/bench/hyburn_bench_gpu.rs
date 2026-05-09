@@ -13,7 +13,7 @@ use std::time::Instant;
 use burn::prelude::Backend;
 
 use hyburn::config::{
-    InitialStateConfig, NetworkConfig, ProjectionConfig, SimConfig,
+    InitialStateConfig, NetworkConfig, NsigConfig, ProjectionConfig, SimConfig,
     SubnetworkConfig, WeightsConfig,
 };
 use hyburn::model::g2do::g2do_default_params;
@@ -81,7 +81,7 @@ fn make_3subnet_config(nnodes: usize) -> SimConfig {
         integrator: hyburn::engine::IntegratorKind::Heun,
         monitors: vec![],
         stimuli: vec![],
-        nsig: 0.0,
+        nsig: NsigConfig::Scalar(0.0),
             backend: "ndarray".to_string(),
     }
 }

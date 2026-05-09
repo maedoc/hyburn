@@ -64,7 +64,7 @@ fn main() {
     {
         use burn::backend::ndarray::NdArray;
         type B = NdArray<f32>;
-        use hyburn::config::{InitialStateConfig, NetworkConfig, ProjectionConfig, SimConfig, SubnetworkConfig, WeightsConfig};
+        use hyburn::config::{InitialStateConfig, NetworkConfig, NsigConfig, ProjectionConfig, SimConfig, SubnetworkConfig, WeightsConfig};
         use hyburn::engine::IntegratorKind;
         use hyburn::engine::batch_engine::{BatchHybridEngine, SweepParam};
         let device: <B as burn::prelude::Backend>::Device = Default::default();
@@ -132,7 +132,7 @@ fn main() {
                 integrator: IntegratorKind::Heun,
                 monitors: vec![],
                 stimuli: vec![],
-                nsig: 0.0,
+                nsig: NsigConfig::Scalar(0.0),
             backend: "ndarray".to_string(),
             };
 
@@ -212,7 +212,7 @@ fn main() {
 
         // Generic BatchHybridEngine on CUDA
         {
-            use hyburn::config::{InitialStateConfig, NetworkConfig, ProjectionConfig, SimConfig, SubnetworkConfig, WeightsConfig};
+            use hyburn::config::{InitialStateConfig, NetworkConfig, NsigConfig, ProjectionConfig, SimConfig, SubnetworkConfig, WeightsConfig};
             use hyburn::engine::IntegratorKind;
             use hyburn::engine::batch_engine::{BatchHybridEngine, SweepParam};
 
@@ -279,7 +279,7 @@ fn main() {
                     integrator: IntegratorKind::Heun,
                     monitors: vec![],
                     stimuli: vec![],
-                    nsig: 0.0,
+                    nsig: NsigConfig::Scalar(0.0),
             backend: "ndarray".to_string(),
                 };
 

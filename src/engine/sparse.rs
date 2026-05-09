@@ -314,7 +314,7 @@ mod tests {
             integrator: IntegratorKind::Heun,
             monitors: vec![],
             stimuli: vec![],
-            nsig: 0.0,
+            nsig: crate::config::NsigConfig::Scalar(0.0),
             backend: "ndarray".to_string(),
         };
 
@@ -328,7 +328,7 @@ mod tests {
             integrator: IntegratorKind::Heun,
             monitors: vec![],
             stimuli: vec![],
-            nsig: 0.0,
+            nsig: crate::config::NsigConfig::Scalar(0.0),
             backend: "ndarray".to_string(),
         };
 

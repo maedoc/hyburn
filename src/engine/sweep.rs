@@ -262,7 +262,7 @@ fn apply_sweep_value(cfg: &mut SimConfig, name: &str, value: f32) -> Result<(), 
     if name == "dt" {
         cfg.dt = value as f64;
     } else if name == "nsig" {
-        cfg.nsig = value;
+        cfg.nsig = crate::config::NsigConfig::Scalar(value);
     } else if name.starts_with("subnetworks[") && name.contains("].params[") {
         let start = name.find('[').ok_or_else(|| format!("malformed sweep param name '{}': missing '['", name))? + 1;
         let end = name.find(']').ok_or_else(|| format!("malformed sweep param name '{}': missing ']'", name))?;

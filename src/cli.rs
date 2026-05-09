@@ -935,7 +935,7 @@ fn apply_sweep_value(
     if name == "dt" {
         cfg.dt = value as f64;
     } else if name == "nsig" {
-        cfg.nsig = value;
+        cfg.nsig = crate::config::NsigConfig::Scalar(value);
     } else if name.starts_with("subnetworks[") && name.contains("].params[") {
         let start = name.find('[').unwrap() + 1;
         let end = name.find(']').unwrap();

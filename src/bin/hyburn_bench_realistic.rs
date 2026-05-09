@@ -12,7 +12,7 @@ use std::time::Instant;
 use burn::backend::ndarray::NdArray;
 
 use hyburn::config::{
-    InitialStateConfig, NetworkConfig, ProjectionConfig, SimConfig,
+    InitialStateConfig, NetworkConfig, NsigConfig, ProjectionConfig, SimConfig,
     SubnetworkConfig, WeightsConfig,
 };
 use hyburn::engine::integrator::IntegratorKind;
@@ -102,7 +102,7 @@ fn make_3subnet_config(nnodes: usize) -> SimConfig {
         integrator: IntegratorKind::Heun,
         monitors: vec![],
         stimuli: vec![],
-        nsig: 0.0,
+        nsig: NsigConfig::Scalar(0.0),
             backend: "ndarray".to_string(),
     }
 }

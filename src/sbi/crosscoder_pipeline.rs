@@ -310,7 +310,7 @@ mod tests {
             integrator: IntegratorKind::Heun,
             monitors: vec![],
             stimuli: vec![],
-            nsig: 0.0,
+            nsig: crate::config::NsigConfig::Scalar(0.0),
             backend: "ndarray".to_string(),
         };
         let sc = vec![0.1, 0.2, 0.3, 0.4];
