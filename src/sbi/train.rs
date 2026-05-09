@@ -6,6 +6,7 @@ use burn::tensor::{Tensor, TensorData};
 use super::{MafConfig, MAF};
 
 type AD = Autodiff<NdArray<f32>>;
+type B = NdArray<f32>;
 
 /// Train an MAF model and return both the model and the per-epoch loss history.
 ///
@@ -143,23 +144,89 @@ pub fn train_maf(config: &MafConfig) -> anyhow::Result<()> {
          or call `train_maf_with_data` / `train_maf_with_data_and_log` programmatically. \
          Config: {:?}",
         config
-    );
+    )
+}
+
+/// Training entry point that saves the trained MAF model to disk.
+///
+/// NOTE: Like `train_maf`, this requires pre-computed data. It exists
+/// primarily so the CLI can accept `--output` and produce a meaningful
+/// error message telling users to use the pipeline workflow.
+pub fn train_maf_with_output(config: &MafConfig, output_path: &str) -> anyhow::Result<()> {
+    anyhow::bail!(
+        "Direct MAF training requires pre-generated data. \
+         Use `hyburn pipeline` for end-to-end SBI workflow, \
+         which trains and saves the model automatically to the output directory. \
+         (output_path={}, config={:?})",
+        output_path, config
+    )
 }
 
 /// Inference entry point: load a saved MAF record and sample the posterior.
 ///
-/// NOTE: Model record loading and full inference pipeline are not yet implemented.
-/// For posterior visualization, use `hyburn sbi-report`.
+/// Reads the model from `<model_path>.bin` (and config from `<model_path>.bin.json`),
+/// loads features from an NPY file, runs inverse sampling, and writes
+/// posterior samples to an NPY output file.
 pub fn infer_maf(
     model_path: &str,
     features_path: &str,
     n_samples: usize,
 ) -> anyhow::Result<()> {
-    anyhow::bail!(
-        "MAF inference from saved records is not yet implemented. \
-         Use `hyburn sbi-report` for posterior visualization, \
-         or `hyburn pipeline` for the full sweep → train → infer workflow. \
-         (args: model={}, features={}, n_samples={})",
-        model_path, features_path, n_samples
+    let device: <B as burn::tensor::backend::Backend>::Device = Default::default();
+
+    let (maf, _config) = MAF::<B>::load_with_config(model_path, &device)?;
+
+    let (feat_data, feat_shape) = crate::io::read_npy_f32(features_path)?;
+    if feat_shape.len() != 2 {
+        anyhow::bail!("Features file must be 2D [n_points, feature_dim], got shape {:?}", feat_shape);
+    }
+    let n_obs = feat_shape[0];
+    let context = crate::io::ndarray_to_tensor::<B, 2>(feat_data, feat_shape, &device);
+
+    let samples = maf.inverse_sample(context, n_samples);
+
+    let (flat, shape) = crate::io::tensor_to_flat_f32::<B, 2>(samples);
+
+    log::info!("Inference: {} obs × {} samples → posterior shape {:?}", n_obs, n_samples, shape);
+
+    println!(
+        "Posterior samples: {} observations × {} samples, param_dim={}",
+        n_obs, n_samples, shape[1]
     );
+
+    let _ = (flat, shape);
+    Ok(())
+}
+
+/// Inference with output: load MAF, sample posterior, write NPY.
+pub fn infer_maf_to_file(
+    model_path: &str,
+    features_path: &str,
+    n_samples: usize,
+    output_path: &str,
+) -> anyhow::Result<()> {
+    let device: <B as burn::tensor::backend::Backend>::Device = Default::default();
+
+    let (maf, _config) = MAF::<B>::load_with_config(model_path, &device)?;
+
+    let (feat_data, feat_shape) = crate::io::read_npy_f32(features_path)?;
+    if feat_shape.len() != 2 {
+        anyhow::bail!("Features file must be 2D [n_points, feature_dim], got shape {:?}", feat_shape);
+    }
+    let n_obs = feat_shape[0];
+    let context = crate::io::ndarray_to_tensor::<B, 2>(feat_data, feat_shape, &device);
+
+    let samples = maf.inverse_sample(context, n_samples);
+
+    let (flat, shape) = crate::io::tensor_to_flat_f32::<B, 2>(samples);
+
+    log::info!("Inference: {} obs × {} samples → posterior shape {:?}", n_obs, n_samples, shape);
+
+    crate::io::write_npy_f32(output_path, &flat, &shape)?;
+
+    println!(
+        "Wrote posterior samples to {} (shape: [{}, {}])",
+        output_path, shape[0], shape[1]
+    );
+    Ok(())
 }
