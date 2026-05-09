@@ -21,6 +21,8 @@ pub struct BatchSweepResult {
     pub final_states: Vec<Vec<f32>>,
     /// Optional per-subnetwork trajectories: flat [n_steps * n_sweep * nvar * nnodes].
     pub trajectories: Option<Vec<Vec<f32>>>,
+    /// Optional BOLD data per monitor: each entry is [n_sweep, n_bold_samples, nnodes].
+    pub bold: Option<Vec<Vec<f32>>>,
     /// Wall-clock time in milliseconds.
     pub elapsed_ms: f64,
     /// Number of sweep points.
@@ -73,6 +75,10 @@ pub struct BatchHybridEngine<B: Backend> {
     pub device: B::Device,
     /// Pre-computed projections with cached weight tensors.
     pub(crate) precomputed_projections: Vec<PrecomputedProjection<B>>,
+    /// BOLD monitors for neural input tracking.
+    pub bold_monitors: Vec<crate::engine::bold_monitor::BoldMonitor>,
+    /// Target subnetwork index for each BOLD monitor.
+    pub bold_targets: Vec<usize>,
 }
 
 impl<B: Backend> BatchHybridEngine<B> {
@@ -296,6 +302,38 @@ impl<B: Backend> BatchHybridEngine<B> {
             });
         }
 
+        let mut bold_monitors = Vec::new();
+        let mut bold_targets = Vec::new();
+        for mon_cfg in &base_config.monitors {
+            let mon_type = mon_cfg.monitor_type.to_ascii_lowercase();
+            if mon_type == "bold" {
+                let target = 0usize;
+                if target >= models.len() {
+                    continue;
+                }
+                let bold_period = mon_cfg.bold_period.unwrap_or_else(|| {
+                    let period_ms = mon_cfg.period.unwrap_or(2000.0);
+                    (period_ms / base_config.dt).max(1.0).round() as usize
+                });
+                let tr = mon_cfg.tr.unwrap_or(2.0);
+                let nnodes = base_config.network.subnetworks[target].nnodes
+                    * base_config.network.subnetworks[target].nmodes;
+                if nnodes == 0 {
+                    continue;
+                }
+                let bm = crate::engine::bold_monitor::BoldMonitor::new(
+                    target,
+                    nnodes,
+                    bold_period,
+                    tr,
+                    base_config.dt,
+                    None,
+                );
+                bold_monitors.push(bm);
+                bold_targets.push(target);
+            }
+        }
+
         Ok(Self {
             models,
             states,
@@ -308,6 +346,8 @@ impl<B: Backend> BatchHybridEngine<B> {
             hybrid_integrator: false,
             device,
             precomputed_projections,
+            bold_monitors,
+            bold_targets,
         })
     }
 
@@ -555,8 +595,34 @@ impl<B: Backend> BatchHybridEngine<B> {
                     trajectories_per_sub[i].extend_from_slice(&flat);
                 }
             }
+
+            // 3. Accumulate BOLD neural input
+            for (mi, monitor) in self.bold_monitors.iter_mut().enumerate() {
+                let target = self.bold_targets[mi];
+                let state = &self.states[target];
+                let nnodes = self.network.subnetworks[target].nnodes;
+                let nmodes = self.network.subnetworks[target].nmodes;
+                // State shape: [n_sweep, nnodes*nmodes, nvar]
+                // Extract var0, average over modes and sweep points
+                let var0 = state.clone().narrow(2, 0, 1) // [n_sweep, nnodes*nmodes, 1]
+                    .reshape([self.n_sweep, nnodes, nmodes]) // [n_sweep, nnodes, nmodes]
+                    .mean_dim(2) // [n_sweep, nnodes, 1]
+                    .squeeze::<2>(2) // [n_sweep, nnodes]
+                    .mean_dim(0) // [1, nnodes]
+                    .squeeze::<1>(0); // [nnodes]
+                let (flat, _shape) = crate::io::tensor_to_flat_f32::<B, 1>(var0);
+                monitor.accumulate(&flat);
+            }
+
             self.step += 1;
         }
+
+        // Flush BOLD monitors and collect data
+        let bold_data: Option<Vec<Vec<f32>>> = if self.bold_monitors.is_empty() {
+            None
+        } else {
+            Some(self.bold_monitors.iter_mut().map(|m| m.flush()).collect())
+        };
 
         // Average and collect results
         let mut tavg_results = Vec::new();
@@ -583,6 +649,7 @@ impl<B: Backend> BatchHybridEngine<B> {
             tavg: tavg_results,
             final_states: final_state_results,
             trajectories,
+            bold: bold_data,
             elapsed_ms: elapsed.as_millis() as f64,
             n_sweep,
         }
@@ -662,7 +729,8 @@ where
         param_values: all_params,
         tavg: all_tavg,
         final_states: all_final,
-        trajectories: None, // trajectories not supported in sharded mode (would need merge)
+        trajectories: None,
+        bold: None,
         elapsed_ms,
         n_sweep: param_values.len(),
     }
