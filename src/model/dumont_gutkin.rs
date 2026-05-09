@@ -13,6 +13,36 @@ impl<B: Backend> NeuralMassModel<B> for DumontGutkin {
         "tau_s", "J_ee", "J_ei", "J_ie", "J_ii", "Gamma",
     ];
 
+    const PARAM_RANGES: &'static [(f32, f32)] = &[
+        (-5.0, 5.0),      // I_e
+        (0.001, 10.0),    // Delta_e
+        (-10.0, 5.0),     // eta_e
+        (0.1, 100.0),     // tau_e
+        (-5.0, 5.0),      // I_i
+        (0.001, 10.0),    // Delta_i
+        (-10.0, 5.0),     // eta_i
+        (0.1, 100.0),     // tau_i
+        (0.1, 100.0),     // tau_s
+        (0.0, 50.0),      // J_ee
+        (0.0, 50.0),      // J_ei
+        (0.0, 50.0),      // J_ie
+        (0.0, 50.0),      // J_ii
+        (0.01, 20.0),     // Gamma
+    ];
+
+    const SVAR_RANGES: &'static [(f32, f32)] = &[
+        (0.0, 10.0),      // r_e (clamped >= 0)
+        (-10.0, 10.0),    // V_e
+        (-10.0, 10.0),    // s_ee
+        (-10.0, 10.0),    // s_ei
+        (0.0, 10.0),      // r_i (clamped >= 0)
+        (-10.0, 10.0),    // V_i
+        (-10.0, 10.0),    // s_ie
+        (-10.0, 10.0),    // s_ii
+    ];
+
+    const STVAR: &'static [usize] = &[0, 1, 2, 3, 4, 5, 6, 7];
+
     fn dfun(state: Tensor<B, 2>, coupling: Tensor<B, 2>, params: &[f32]) -> Tensor<B, 2> {
         let state3 = state.unsqueeze_dim::<3>(0);
         let coupling3 = coupling.unsqueeze_dim::<3>(0);

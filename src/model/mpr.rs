@@ -21,6 +21,23 @@ impl<B: Backend> NeuralMassModel<B> for MontbrioPazoRoxin {
     const NCVAR: usize = 2;
     const PARAM_NAMES: &'static [&'static str] = &["tau", "Delta", "eta", "J", "I", "cr", "cv"];
 
+    const PARAM_RANGES: &'static [(f32, f32)] = &[
+        (0.01, 100.0),    // tau
+        (0.001, 10.0),    // Delta
+        (-10.0, 5.0),     // eta
+        (0.0, 50.0),      // J
+        (-5.0, 5.0),      // I
+        (-5.0, 5.0),      // cr
+        (-5.0, 5.0),      // cv
+    ];
+
+    const SVAR_RANGES: &'static [(f32, f32)] = &[
+        (0.0, 5.0),       // r (clamped >= 0)
+        (-10.0, 10.0),    // V
+    ];
+
+    const STVAR: &'static [usize] = &[0, 1];
+
     fn dfun(
         state: Tensor<B, 2>,
         coupling: Tensor<B, 2>,

@@ -20,6 +20,16 @@ impl<B: Backend> NeuralMassModel<B> for Kuramoto {
     const NCVAR: usize = 1;
     const PARAM_NAMES: &'static [&'static str] = &["omega"];
 
+    const PARAM_RANGES: &'static [(f32, f32)] = &[
+        (-10.0, 10.0),    // omega
+    ];
+
+    const SVAR_RANGES: &'static [(f32, f32)] = &[
+        (0.0, std::f32::consts::TAU),
+    ];
+
+    const STVAR: &'static [usize] = &[0];
+
     fn dfun(
         state: Tensor<B, 2>,
         coupling: Tensor<B, 2>,

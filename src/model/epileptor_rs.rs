@@ -14,6 +14,50 @@ impl<B: Backend> NeuralMassModel<B> for EpileptorRestingState {
         "alpha_rs", "beta_rs", "gamma_rs", "K_rs",
     ];
 
+    const PARAM_RANGES: &'static [(f32, f32)] = &[
+        (-2.0, 10.0),     // Iext
+        (-2.0, 5.0),      // Iext2
+        (-5.0, 0.0),      // x0
+        (0.01, 10.0),     // a
+        (0.01, 10.0),     // b
+        (0.01, 5.0),      // c
+        (0.01, 10.0),     // d
+        (0.00001, 0.01),  // r
+        (0.0, 10.0),      // slope
+        (0.1, 100.0),     // tau
+        (0.01, 10.0),     // aa
+        (0.01, 10.0),     // bb
+        (-5.0, 5.0),      // Kvf
+        (-5.0, 5.0),      // Kf
+        (-5.0, 5.0),      // Ks
+        (0.1, 10.0),      // tt
+        (0.0, 2.0),       // modification
+        (0.01, 100.0),    // tau_rs
+        (-5.0, 5.0),      // I_rs
+        (-5.0, 5.0),      // a_rs
+        (-20.0, 15.0),    // b_rs
+        (0.0001, 1.0),    // d_rs
+        (-5.0, 5.0),      // e_rs
+        (0.01, 10.0),     // f_rs
+        (-5.0, 5.0),      // alpha_rs
+        (0.01, 10.0),     // beta_rs
+        (-1.0, 1.0),      // gamma_rs
+        (-5.0, 5.0),      // K_rs
+    ];
+
+    const SVAR_RANGES: &'static [(f32, f32)] = &[
+        (-5.0, 5.0),      // x1
+        (-20.0, 5.0),     // y1
+        (-5.0, 5.0),      // z
+        (-5.0, 5.0),      // x2
+        (-5.0, 5.0),      // y2
+        (-5.0, 5.0),      // g
+        (-2.0, 4.0),      // x_rs
+        (-6.0, 6.0),      // y_rs
+    ];
+
+    const STVAR: &'static [usize] = &[0, 1, 2, 3, 4, 5, 6, 7];
+
     fn dfun(state: Tensor<B, 2>, coupling: Tensor<B, 2>, params: &[f32]) -> Tensor<B, 2> {
         let state3 = state.unsqueeze_dim::<3>(0);
         let coupling3 = coupling.unsqueeze_dim::<3>(0);

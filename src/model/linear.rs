@@ -9,6 +9,16 @@ impl<B: Backend> NeuralMassModel<B> for Linear {
     const NCVAR: usize = 1;
     const PARAM_NAMES: &'static [&'static str] = &["gamma"];
 
+    const PARAM_RANGES: &'static [(f32, f32)] = &[
+        (-100.0, 0.0),    // gamma
+    ];
+
+    const SVAR_RANGES: &'static [(f32, f32)] = &[
+        (f32::NAN, f32::NAN), // x (unbounded)
+    ];
+
+    const STVAR: &'static [usize] = &[0];
+
     fn dfun(state: Tensor<B, 2>, coupling: Tensor<B, 2>, params: &[f32]) -> Tensor<B, 2> {
         let state3 = state.unsqueeze_dim::<3>(0);
         let coupling3 = coupling.unsqueeze_dim::<3>(0);

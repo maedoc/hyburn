@@ -334,7 +334,7 @@ impl PipelineConfig {
                     ParamPrior::new(legacy.sweep_param.clone(), legacy.sweep_min, legacy.sweep_max)
                 ]);
                 Ok(PipelineConfig {
-                    prior: PriorConfig { distribution: prior, seed: Some(42) },
+                    prior: PriorConfig { distribution: prior, seed: Some(42), sampling: Default::default() },
                     n_steps: legacy.n_steps,
                     hidden_units: legacy.hidden_units,
                     n_flows: legacy.n_flows,

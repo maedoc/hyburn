@@ -11,6 +11,28 @@ impl<B: Backend> NeuralMassModel<B> for Epileptor2D {
         "Iext", "x0", "a", "b", "slope", "c", "d", "r", "Kvf", "Ks", "tt", "modification",
     ];
 
+    const PARAM_RANGES: &'static [(f32, f32)] = &[
+        (-2.0, 10.0),     // Iext
+        (-5.0, 0.0),      // x0
+        (0.01, 10.0),     // a
+        (0.01, 10.0),     // b
+        (0.0, 10.0),      // slope
+        (0.01, 5.0),      // c
+        (0.01, 10.0),     // d
+        (0.00001, 0.01),  // r
+        (-5.0, 5.0),      // Kvf
+        (-5.0, 5.0),      // Ks
+        (0.1, 10.0),      // tt
+        (0.0, 2.0),       // modification
+    ];
+
+    const SVAR_RANGES: &'static [(f32, f32)] = &[
+        (-5.0, 5.0),      // x1
+        (-5.0, 5.0),      // z
+    ];
+
+    const STVAR: &'static [usize] = &[0, 1];
+
     fn dfun(state: Tensor<B, 2>, coupling: Tensor<B, 2>, params: &[f32]) -> Tensor<B, 2> {
         let state3 = state.unsqueeze_dim::<3>(0);
         let coupling3 = coupling.unsqueeze_dim::<3>(0);

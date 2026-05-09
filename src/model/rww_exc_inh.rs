@@ -14,6 +14,35 @@ impl<B: Backend> NeuralMassModel<B> for ReducedWongWangExcInh {
         "J_i", "W_i", "I_o", "I_ext", "G", "lamda",
     ];
 
+    const PARAM_RANGES: &'static [(f32, f32)] = &[
+        (1.0, 1000.0),    // a_e
+        (1.0, 500.0),     // b_e
+        (0.01, 1.0),      // d_e
+        (0.0001, 0.01),   // gamma_e
+        (1.0, 1000.0),    // tau_e
+        (0.0, 5.0),       // w_p
+        (0.0, 5.0),       // J_N
+        (0.0, 5.0),       // W_e
+        (1.0, 1000.0),    // a_i
+        (1.0, 500.0),     // b_i
+        (0.01, 1.0),      // d_i
+        (0.0001, 0.01),   // gamma_i
+        (0.1, 100.0),     // tau_i
+        (0.0, 5.0),       // J_i
+        (0.0, 5.0),       // W_i
+        (-1.0, 1.0),      // I_o
+        (-5.0, 5.0),      // I_ext
+        (0.0, 10.0),      // G
+        (-5.0, 5.0),      // lamda
+    ];
+
+    const SVAR_RANGES: &'static [(f32, f32)] = &[
+        (0.0, 1.0),       // S_e (clamped [0,1])
+        (0.0, 1.0),       // S_i (clamped [0,1])
+    ];
+
+    const STVAR: &'static [usize] = &[0, 1];
+
     fn dfun(state: Tensor<B, 2>, coupling: Tensor<B, 2>, params: &[f32]) -> Tensor<B, 2> {
         let state3 = state.unsqueeze_dim::<3>(0);
         let coupling3 = coupling.unsqueeze_dim::<3>(0);

@@ -9,6 +9,19 @@ impl<B: Backend> NeuralMassModel<B> for Hopfield {
     const NCVAR: usize = 2;
     const PARAM_NAMES: &'static [&'static str] = &["taux", "tauT", "dynamic"];
 
+    const PARAM_RANGES: &'static [(f32, f32)] = &[
+        (0.01, 100.0),    // taux
+        (0.01, 100.0),    // tauT
+        (0.0, 1.0),       // dynamic
+    ];
+
+    const SVAR_RANGES: &'static [(f32, f32)] = &[
+        (-10.0, 10.0),    // x
+        (-10.0, 10.0),    // T
+    ];
+
+    const STVAR: &'static [usize] = &[0, 1];
+
     fn dfun(state: Tensor<B, 2>, coupling: Tensor<B, 2>, params: &[f32]) -> Tensor<B, 2> {
         let state3 = state.unsqueeze_dim::<3>(0);
         let coupling3 = coupling.unsqueeze_dim::<3>(0);

@@ -22,6 +22,23 @@ impl<B: Backend> NeuralMassModel<B> for ReducedWongWang {
     const NCVAR: usize = 1;
     const PARAM_NAMES: &'static [&'static str] = &["a", "b", "d", "gamma", "tau_s", "w", "J_N", "I_o"];
 
+    const PARAM_RANGES: &'static [(f32, f32)] = &[
+        (0.01, 1.0),      // a
+        (0.0, 1.0),       // b
+        (1.0, 500.0),     // d
+        (0.01, 10.0),     // gamma
+        (1.0, 1000.0),    // tau_s
+        (0.0, 2.0),       // w
+        (0.0, 5.0),       // J_N
+        (-1.0, 1.0),      // I_o
+    ];
+
+    const SVAR_RANGES: &'static [(f32, f32)] = &[
+        (0.0, 1.0),       // S (clamped [0,1])
+    ];
+
+    const STVAR: &'static [usize] = &[0];
+
     fn dfun(
         state: Tensor<B, 2>,
         coupling: Tensor<B, 2>,

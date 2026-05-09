@@ -17,6 +17,49 @@ impl<B: Backend> NeuralMassModel<B> for LarterBreakspear {
         "VT", "ZT", "QV_max", "QZ_max", "t_scale", "tau_K",
     ];
 
+    const PARAM_RANGES: &'static [(f32, f32)] = &[
+        (0.01, 10.0),     // gCa
+        (0.01, 10.0),     // gK
+        (0.01, 5.0),      // gL
+        (0.01, 20.0),     // gNa
+        (0.01, 10.0),     // phi
+        (-5.0, 5.0),      // VCa
+        (-5.0, 1.0),      // VK
+        (-1.0, 1.0),      // VL
+        (-1.0, 5.0),      // VNa
+        (-1.0, 5.0),      // TCa
+        (0.0, 5.0),       // TNa
+        (-5.0, 5.0),      // TK
+        (0.01, 5.0),      // d_Ca
+        (0.01, 5.0),      // d_Na
+        (0.01, 5.0),      // d_K
+        (0.01, 5.0),      // d_V
+        (0.01, 5.0),      // d_Z
+        (0.0, 10.0),      // aei
+        (0.0, 10.0),      // aie
+        (0.0, 10.0),      // aee
+        (0.0, 10.0),      // ane
+        (0.0, 10.0),      // ani
+        (0.0, 1.0),       // b
+        (0.0, 1.0),       // C
+        (-5.0, 5.0),      // Iext
+        (0.0, 1.0),       // rNMDA
+        (-5.0, 5.0),      // VT
+        (-5.0, 5.0),      // ZT
+        (0.01, 10.0),     // QV_max
+        (0.01, 10.0),     // QZ_max
+        (0.01, 10.0),     // t_scale
+        (0.01, 10.0),     // tau_K
+    ];
+
+    const SVAR_RANGES: &'static [(f32, f32)] = &[
+        (-2.0, 2.0),      // V
+        (-10.0, 10.0),    // W
+        (-10.0, 10.0),    // Z
+    ];
+
+    const STVAR: &'static [usize] = &[0, 1, 2];
+
     fn dfun(state: Tensor<B, 2>, coupling: Tensor<B, 2>, params: &[f32]) -> Tensor<B, 2> {
         let state3 = state.unsqueeze_dim::<3>(0);
         let coupling3 = coupling.unsqueeze_dim::<3>(0);

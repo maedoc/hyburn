@@ -9,6 +9,20 @@ impl<B: Backend> NeuralMassModel<B> for CoombesByrne2D {
     const NCVAR: usize = 2;
     const PARAM_NAMES: &'static [&'static str] = &["Delta", "v_syn", "k", "eta"];
 
+    const PARAM_RANGES: &'static [(f32, f32)] = &[
+        (0.001, 10.0),    // Delta
+        (-20.0, 20.0),    // v_syn
+        (0.0, 10.0),      // k
+        (-10.0, 30.0),    // eta
+    ];
+
+    const SVAR_RANGES: &'static [(f32, f32)] = &[
+        (0.0, 10.0),      // r (clamped >= 0)
+        (-20.0, 20.0),    // V
+    ];
+
+    const STVAR: &'static [usize] = &[0, 1];
+
     fn dfun(state: Tensor<B, 2>, coupling: Tensor<B, 2>, params: &[f32]) -> Tensor<B, 2> {
         let state3 = state.unsqueeze_dim::<3>(0);
         let coupling3 = coupling.unsqueeze_dim::<3>(0);

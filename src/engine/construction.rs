@@ -156,6 +156,108 @@ impl<B: Backend> EngineModel<B> {
         }
     }
 
+    pub fn param_ranges(&self) -> &'static [(f32, f32)] {
+        match self {
+            EngineModel::G2do { .. } => <Generic2dOscillator as NeuralMassModel<B>>::PARAM_RANGES,
+            EngineModel::Mpr { .. } => <MontbrioPazoRoxin as NeuralMassModel<B>>::PARAM_RANGES,
+            EngineModel::Rww { .. } => <ReducedWongWang as NeuralMassModel<B>>::PARAM_RANGES,
+            EngineModel::Kuramoto { .. } => <Kuramoto as NeuralMassModel<B>>::PARAM_RANGES,
+            EngineModel::JansenRit { .. } => <JansenRit as NeuralMassModel<B>>::PARAM_RANGES,
+            EngineModel::WilsonCowan { .. } => <WilsonCowan as NeuralMassModel<B>>::PARAM_RANGES,
+            EngineModel::Linear { .. } => <Linear as NeuralMassModel<B>>::PARAM_RANGES,
+            EngineModel::SupHopf { .. } => <SupHopf as NeuralMassModel<B>>::PARAM_RANGES,
+            EngineModel::Hopfield { .. } => <Hopfield as NeuralMassModel<B>>::PARAM_RANGES,
+            EngineModel::CoombesByrne2D { .. } => <CoombesByrne2D as NeuralMassModel<B>>::PARAM_RANGES,
+            EngineModel::CoombesByrne { .. } => <CoombesByrne as NeuralMassModel<B>>::PARAM_RANGES,
+            EngineModel::GastSD { .. } => <GastSchmidtKnoscheSD as NeuralMassModel<B>>::PARAM_RANGES,
+            EngineModel::GastSF { .. } => <GastSchmidtKnoscheSF as NeuralMassModel<B>>::PARAM_RANGES,
+            EngineModel::LarterBreakspear { .. } => <LarterBreakspear as NeuralMassModel<B>>::PARAM_RANGES,
+            EngineModel::Epileptor2D { .. } => <Epileptor2D as NeuralMassModel<B>>::PARAM_RANGES,
+            EngineModel::Epileptor { .. } => <Epileptor as NeuralMassModel<B>>::PARAM_RANGES,
+            EngineModel::RwwExcInh { .. } => <ReducedWongWangExcInh as NeuralMassModel<B>>::PARAM_RANGES,
+            EngineModel::DecoBalancedExcInh { .. } => <DecoBalancedExcInh as NeuralMassModel<B>>::PARAM_RANGES,
+            EngineModel::EpileptorCodim3 { .. } => <EpileptorCodim3 as NeuralMassModel<B>>::PARAM_RANGES,
+            EngineModel::EpileptorCodim3SlowMod { .. } => <EpileptorCodim3SlowMod as NeuralMassModel<B>>::PARAM_RANGES,
+            EngineModel::EpileptorRS { .. } => <EpileptorRestingState as NeuralMassModel<B>>::PARAM_RANGES,
+            EngineModel::ZetterbergJansen { .. } => <ZetterbergJansen as NeuralMassModel<B>>::PARAM_RANGES,
+            EngineModel::ReducedFHN { .. } => <ReducedSetFitzHughNagumo as NeuralMassModel<B>>::PARAM_RANGES,
+            EngineModel::ReducedHR { .. } => <ReducedSetHindmarshRose as NeuralMassModel<B>>::PARAM_RANGES,
+            EngineModel::DumontGutkin { .. } => <DumontGutkin as NeuralMassModel<B>>::PARAM_RANGES,
+            EngineModel::ZerlautFirst { .. } => <ZerlautAdaptationFirstOrder as NeuralMassModel<B>>::PARAM_RANGES,
+            EngineModel::ZerlautSecond { .. } => <ZerlautAdaptationSecondOrder as NeuralMassModel<B>>::PARAM_RANGES,
+            EngineModel::KIonEx { .. } => <KIonEx as NeuralMassModel<B>>::PARAM_RANGES,
+            _ => unreachable!(),
+        }
+    }
+
+    pub fn svar_ranges(&self) -> &'static [(f32, f32)] {
+        match self {
+            EngineModel::G2do { .. } => <Generic2dOscillator as NeuralMassModel<B>>::SVAR_RANGES,
+            EngineModel::Mpr { .. } => <MontbrioPazoRoxin as NeuralMassModel<B>>::SVAR_RANGES,
+            EngineModel::Rww { .. } => <ReducedWongWang as NeuralMassModel<B>>::SVAR_RANGES,
+            EngineModel::Kuramoto { .. } => <Kuramoto as NeuralMassModel<B>>::SVAR_RANGES,
+            EngineModel::JansenRit { .. } => <JansenRit as NeuralMassModel<B>>::SVAR_RANGES,
+            EngineModel::WilsonCowan { .. } => <WilsonCowan as NeuralMassModel<B>>::SVAR_RANGES,
+            EngineModel::Linear { .. } => <Linear as NeuralMassModel<B>>::SVAR_RANGES,
+            EngineModel::SupHopf { .. } => <SupHopf as NeuralMassModel<B>>::SVAR_RANGES,
+            EngineModel::Hopfield { .. } => <Hopfield as NeuralMassModel<B>>::SVAR_RANGES,
+            EngineModel::CoombesByrne2D { .. } => <CoombesByrne2D as NeuralMassModel<B>>::SVAR_RANGES,
+            EngineModel::CoombesByrne { .. } => <CoombesByrne as NeuralMassModel<B>>::SVAR_RANGES,
+            EngineModel::GastSD { .. } => <GastSchmidtKnoscheSD as NeuralMassModel<B>>::SVAR_RANGES,
+            EngineModel::GastSF { .. } => <GastSchmidtKnoscheSF as NeuralMassModel<B>>::SVAR_RANGES,
+            EngineModel::LarterBreakspear { .. } => <LarterBreakspear as NeuralMassModel<B>>::SVAR_RANGES,
+            EngineModel::Epileptor2D { .. } => <Epileptor2D as NeuralMassModel<B>>::SVAR_RANGES,
+            EngineModel::Epileptor { .. } => <Epileptor as NeuralMassModel<B>>::SVAR_RANGES,
+            EngineModel::RwwExcInh { .. } => <ReducedWongWangExcInh as NeuralMassModel<B>>::SVAR_RANGES,
+            EngineModel::DecoBalancedExcInh { .. } => <DecoBalancedExcInh as NeuralMassModel<B>>::SVAR_RANGES,
+            EngineModel::EpileptorCodim3 { .. } => <EpileptorCodim3 as NeuralMassModel<B>>::SVAR_RANGES,
+            EngineModel::EpileptorCodim3SlowMod { .. } => <EpileptorCodim3SlowMod as NeuralMassModel<B>>::SVAR_RANGES,
+            EngineModel::EpileptorRS { .. } => <EpileptorRestingState as NeuralMassModel<B>>::SVAR_RANGES,
+            EngineModel::ZetterbergJansen { .. } => <ZetterbergJansen as NeuralMassModel<B>>::SVAR_RANGES,
+            EngineModel::ReducedFHN { .. } => <ReducedSetFitzHughNagumo as NeuralMassModel<B>>::SVAR_RANGES,
+            EngineModel::ReducedHR { .. } => <ReducedSetHindmarshRose as NeuralMassModel<B>>::SVAR_RANGES,
+            EngineModel::DumontGutkin { .. } => <DumontGutkin as NeuralMassModel<B>>::SVAR_RANGES,
+            EngineModel::ZerlautFirst { .. } => <ZerlautAdaptationFirstOrder as NeuralMassModel<B>>::SVAR_RANGES,
+            EngineModel::ZerlautSecond { .. } => <ZerlautAdaptationSecondOrder as NeuralMassModel<B>>::SVAR_RANGES,
+            EngineModel::KIonEx { .. } => <KIonEx as NeuralMassModel<B>>::SVAR_RANGES,
+            _ => unreachable!(),
+        }
+    }
+
+    pub fn stvar(&self) -> &'static [usize] {
+        match self {
+            EngineModel::G2do { .. } => <Generic2dOscillator as NeuralMassModel<B>>::STVAR,
+            EngineModel::Mpr { .. } => <MontbrioPazoRoxin as NeuralMassModel<B>>::STVAR,
+            EngineModel::Rww { .. } => <ReducedWongWang as NeuralMassModel<B>>::STVAR,
+            EngineModel::Kuramoto { .. } => <Kuramoto as NeuralMassModel<B>>::STVAR,
+            EngineModel::JansenRit { .. } => <JansenRit as NeuralMassModel<B>>::STVAR,
+            EngineModel::WilsonCowan { .. } => <WilsonCowan as NeuralMassModel<B>>::STVAR,
+            EngineModel::Linear { .. } => <Linear as NeuralMassModel<B>>::STVAR,
+            EngineModel::SupHopf { .. } => <SupHopf as NeuralMassModel<B>>::STVAR,
+            EngineModel::Hopfield { .. } => <Hopfield as NeuralMassModel<B>>::STVAR,
+            EngineModel::CoombesByrne2D { .. } => <CoombesByrne2D as NeuralMassModel<B>>::STVAR,
+            EngineModel::CoombesByrne { .. } => <CoombesByrne as NeuralMassModel<B>>::STVAR,
+            EngineModel::GastSD { .. } => <GastSchmidtKnoscheSD as NeuralMassModel<B>>::STVAR,
+            EngineModel::GastSF { .. } => <GastSchmidtKnoscheSF as NeuralMassModel<B>>::STVAR,
+            EngineModel::LarterBreakspear { .. } => <LarterBreakspear as NeuralMassModel<B>>::STVAR,
+            EngineModel::Epileptor2D { .. } => <Epileptor2D as NeuralMassModel<B>>::STVAR,
+            EngineModel::Epileptor { .. } => <Epileptor as NeuralMassModel<B>>::STVAR,
+            EngineModel::RwwExcInh { .. } => <ReducedWongWangExcInh as NeuralMassModel<B>>::STVAR,
+            EngineModel::DecoBalancedExcInh { .. } => <DecoBalancedExcInh as NeuralMassModel<B>>::STVAR,
+            EngineModel::EpileptorCodim3 { .. } => <EpileptorCodim3 as NeuralMassModel<B>>::STVAR,
+            EngineModel::EpileptorCodim3SlowMod { .. } => <EpileptorCodim3SlowMod as NeuralMassModel<B>>::STVAR,
+            EngineModel::EpileptorRS { .. } => <EpileptorRestingState as NeuralMassModel<B>>::STVAR,
+            EngineModel::ZetterbergJansen { .. } => <ZetterbergJansen as NeuralMassModel<B>>::STVAR,
+            EngineModel::ReducedFHN { .. } => <ReducedSetFitzHughNagumo as NeuralMassModel<B>>::STVAR,
+            EngineModel::ReducedHR { .. } => <ReducedSetHindmarshRose as NeuralMassModel<B>>::STVAR,
+            EngineModel::DumontGutkin { .. } => <DumontGutkin as NeuralMassModel<B>>::STVAR,
+            EngineModel::ZerlautFirst { .. } => <ZerlautAdaptationFirstOrder as NeuralMassModel<B>>::STVAR,
+            EngineModel::ZerlautSecond { .. } => <ZerlautAdaptationSecondOrder as NeuralMassModel<B>>::STVAR,
+            EngineModel::KIonEx { .. } => <KIonEx as NeuralMassModel<B>>::STVAR,
+            _ => unreachable!(),
+        }
+    }
+
     pub fn dfun(&self, state: Tensor<B, 2>, coupling: Tensor<B, 2>) -> Tensor<B, 2> {
         use crate::engine::batch_engine::dfun::{dfun_batch, model_param_slice};
 

@@ -43,6 +43,17 @@ pub trait NeuralMassModel<B: Backend> {
     /// Human-readable parameter names (for config/help).
     const PARAM_NAMES: &'static [&'static str];
 
+    /// Valid parameter ranges: `(lo, hi)` per parameter.
+    /// Use `(f32::NAN, f32::NAN)` for params without a clear domain.
+    const PARAM_RANGES: &'static [(f32, f32)];
+
+    /// Valid state variable ranges: `(lo, hi)` per state variable.
+    /// Use `(f32::NAN, f32::NAN)` for variables without a clear domain.
+    const SVAR_RANGES: &'static [(f32, f32)];
+
+    /// Indices of state variables that receive stochastic noise.
+    const STVAR: &'static [usize];
+
     /// Compute state derivatives given current state and coupling input.
     ///
     /// - `state`: shape `[nnodes, nvar]`
