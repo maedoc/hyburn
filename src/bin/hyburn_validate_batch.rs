@@ -66,7 +66,7 @@ fn main() {
     println!();
 
     // Run the same sweep using the existing serial HybridEngine for comparison
-    use hyburn::config::{InitialStateConfig, NetworkConfig, ProjectionConfig, SimConfig, SubnetworkConfig, WeightsConfig};
+    use hyburn::config::{InitialStateConfig, NetworkConfig, NsigConfig, ProjectionConfig, SimConfig, SubnetworkConfig, WeightsConfig};
     use hyburn::model::{g2do::g2do_default_params, jansen_rit::jansen_rit_default_params, wilson_cowan::wilson_cowan_default_params};
 
     let cfg = SimConfig {

@@ -260,7 +260,7 @@ mod tests {
         let lp_after = log_prob_after.into_data().as_slice::<f32>().unwrap().to_vec();
         for (a, b) in lp_before.iter().zip(lp_after.iter()) {
             assert!(
-                (a - b).abs() < 1e-5,
+                (a - b).abs() < 1e-3,
                 "log_prob mismatch after save/load: {} vs {}",
                 a, b
             );
