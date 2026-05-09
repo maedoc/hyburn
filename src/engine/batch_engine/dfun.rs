@@ -939,57 +939,15 @@ pub fn epileptor_codim3_slowmod_dfun_batch<B: Backend>(
     params: &[f32],
     _sweep: Option<&Tensor<B, 3>>,
 ) -> Tensor<B, 3> {
-    let mu1_start = params[0]; let mu2_start = params[1]; let nu_start = params[2];
-    let mu1_stop = params[3]; let mu2_stop = params[4]; let nu_stop = params[5];
     let b = params[6]; let r_p = params[7]; let c_p = params[8];
     let dstar = params[9]; let ks = params[10];
     let n_branch = params[11] as i32;
     let modification = params[12] > 0.5;
     let c_a = params[25]; let c_b = params[26];
-    let a_in = [params[14], -params[13], params[15]];
-    let b_in = [params[17], -params[16], params[18]];
-    let a_end = [params[20], -params[19], params[21]];
-    let b_end = [params[23], -params[22], params[24]];
-    let start_pt = [mu2_start, -mu1_start, nu_start];
-    let stop_pt = [mu2_stop, -mu1_stop, nu_stop];
-    let start_norm: f32 = start_pt.iter().map(|v| v * v).sum::<f32>().sqrt().max(f32::EPSILON);
-    let stop_norm: f32 = stop_pt.iter().map(|v| v * v).sum::<f32>().sqrt().max(f32::EPSILON);
-    let a_pt: [f32; 3] = std::array::from_fn(|i| start_pt[i] / start_norm);
-    let b_pt: [f32; 3] = std::array::from_fn(|i| stop_pt[i] / stop_norm);
-    let cross: [f32; 3] = [
-        a_pt[1] * b_pt[2] - a_pt[2] * b_pt[1],
-        a_pt[2] * b_pt[0] - a_pt[0] * b_pt[2],
-        a_pt[0] * b_pt[1] - a_pt[1] * b_pt[0],
-    ];
-    let cross_norm: f32 = cross.iter().map(|v| v * v).sum::<f32>().sqrt().max(f32::EPSILON);
-    let cross_cross_a: [f32; 3] = {
-        let cca: [f32; 3] = std::array::from_fn(|i| {
-            cross[(i+1)%3] * a_pt[(i+2)%3] - cross[(i+2)%3] * a_pt[(i+1)%3]
-        });
-        let cca_norm: f32 = cca.iter().map(|v| v * v).sum::<f32>().sqrt().max(f32::EPSILON);
-        std::array::from_fn(|i| cca[i] / cca_norm)
-    };
-    let e_vec = a_pt;
-    let f_vec = cross_cross_a;
-    fn make_g_h(pt_in: [f32; 3], pt_end: [f32; 3]) -> ([f32; 3], [f32; 3]) {
-        let norm: f32 = pt_in.iter().map(|v| v * v).sum::<f32>().sqrt().max(f32::EPSILON);
-        let g: [f32; 3] = std::array::from_fn(|i| pt_in[i] / norm);
-        let cr: [f32; 3] = [
-            g[1]*pt_end[2] - g[2]*pt_end[1],
-            g[2]*pt_end[0] - g[0]*pt_end[2],
-            g[0]*pt_end[1] - g[1]*pt_end[0],
-        ];
-        let cca: [f32; 3] = [
-            cr[1]*g[2] - cr[2]*g[1],
-            cr[2]*g[0] - cr[0]*g[2],
-            cr[0]*g[1] - cr[1]*g[0],
-        ];
-        let cca_norm: f32 = cca.iter().map(|v| v * v).sum::<f32>().sqrt().max(f32::EPSILON);
-        let h: [f32; 3] = std::array::from_fn(|i| cca[i] / cca_norm);
-        (g, h)
-    }
-    let (g_vec, h_vec) = make_g_h(a_in, a_end);
-    let (l_vec, m_vec) = make_g_h(b_in, b_end);
+    let g_vec = [params[13], params[14], params[15]];
+    let l_vec = [params[16], params[17], params[18]];
+    let h_vec = [params[19], params[20], params[21]];
+    let m_vec = [params[22], params[23], params[24]];
     let x = state.clone().narrow(2, 0, 1);
     let y = state.clone().narrow(2, 1, 1);
     let z = state.clone().narrow(2, 2, 1);
@@ -1000,19 +958,42 @@ pub fn epileptor_codim3_slowmod_dfun_batch<B: Backend>(
     let sin_ua = u_a.clone().sin();
     let cos_ub = u_b.clone().cos();
     let sin_ub = u_b.clone().sin();
-    let _offset = Tensor::cat(vec![cos_ua.clone(), sin_ua.clone()], 2)
-        .narrow(2, 0, 1).mul_scalar(g_vec[0] * r_p)
-        .add(Tensor::cat(vec![cos_ua.clone(), sin_ua.clone()], 2)
-        .narrow(2, 1, 1).mul_scalar(h_vec[0] * r_p));
-    let _onset = Tensor::cat(vec![cos_ub.clone(), sin_ub.clone()], 2)
-        .narrow(2, 0, 1).mul_scalar(l_vec[0] * r_p)
-        .add(Tensor::cat(vec![cos_ub.clone(), sin_ub.clone()], 2)
-        .narrow(2, 1, 1).mul_scalar(m_vec[0] * r_p));
+    let a_0 = cos_ua.clone().mul_scalar(g_vec[0] * r_p)
+        + sin_ua.clone().mul_scalar(h_vec[0] * r_p);
+    let a_1 = cos_ua.clone().mul_scalar(g_vec[1] * r_p)
+        + sin_ua.clone().mul_scalar(h_vec[1] * r_p);
+    let a_2 = cos_ua.mul_scalar(g_vec[2] * r_p)
+        + sin_ua.mul_scalar(h_vec[2] * r_p);
+    let b_0 = cos_ub.clone().mul_scalar(l_vec[0] * r_p)
+        + sin_ub.clone().mul_scalar(m_vec[0] * r_p);
+    let b_1 = cos_ub.clone().mul_scalar(l_vec[1] * r_p)
+        + sin_ub.clone().mul_scalar(m_vec[1] * r_p);
+    let b_2 = cos_ub.mul_scalar(l_vec[2] * r_p)
+        + sin_ub.mul_scalar(m_vec[2] * r_p);
+    let a_sq = a_0.clone() * a_0.clone() + a_1.clone() * a_1.clone() + a_2.clone() * a_2.clone();
+    let a_norm = a_sq.sqrt().clamp(f32::EPSILON, f32::INFINITY);
+    let e_0 = a_0.clone() / a_norm.clone();
+    let e_1 = a_1.clone() / a_norm.clone();
+    let e_2 = a_2.clone() / a_norm;
+    let c0 = a_1.clone() * b_2.clone() - a_2.clone() * b_1.clone();
+    let c1 = a_2.clone() * b_0.clone() - a_0.clone() * b_2.clone();
+    let c2 = a_0.clone() * b_1.clone() - a_1.clone() * b_0.clone();
+    let f_0_raw = c1.clone() * a_2.clone() - c2.clone() * a_1.clone();
+    let f_1_raw = c2.clone() * a_0.clone() - c0.clone() * a_2.clone();
+    let f_2_raw = c0.clone() * a_1.clone() - c1.clone() * a_0.clone();
+    let f_sq = f_0_raw.clone() * f_0_raw.clone()
+        + f_1_raw.clone() * f_1_raw.clone()
+        + f_2_raw.clone() * f_2_raw.clone();
+    let f_norm = f_sq.sqrt().clamp(f32::EPSILON, f32::INFINITY);
+    let f_0 = f_0_raw / f_norm.clone();
+    let f_1 = f_1_raw / f_norm.clone();
+    let f_2 = f_2_raw / f_norm;
     let cos_z = z.clone().cos();
     let sin_z = z.clone().sin();
-    let mu2 = (cos_z.clone().mul_scalar(e_vec[0]) + sin_z.clone().mul_scalar(f_vec[0])).mul_scalar(r_p);
-    let mu1 = (cos_z.clone().mul_scalar(e_vec[1]) + sin_z.clone().mul_scalar(f_vec[1])).mul_scalar(-r_p);
-    let nu = (cos_z.mul_scalar(e_vec[2]) + sin_z.mul_scalar(f_vec[2])).mul_scalar(r_p);
+    let mu2 = (cos_z.clone() * e_0 + sin_z.clone() * f_0).mul_scalar(r_p);
+    let mu1_raw = (cos_z.clone() * e_1 + sin_z.clone() * f_1).mul_scalar(r_p);
+    let nu = (cos_z * e_2 + sin_z * f_2).mul_scalar(r_p);
+    let mu1 = mu1_raw.neg();
     let disc = mu1.clone().mul_scalar(0.25) * mu1.clone()
         - mu2.clone() * mu2.clone() * mu2.clone().mul_scalar(1.0 / 27.0);
     let sqrt_r = mu2.clone().div_scalar(3.0).clamp(f32::EPSILON, f32::INFINITY).sqrt();
@@ -1320,19 +1301,25 @@ pub fn dumont_gutkin_dfun_batch<B: Backend>(
     Tensor::cat(vec![dr_e, dv_e, ds_ee, ds_ei, dr_i, dv_i, ds_ie, ds_ii], 2)
 }
 
-fn acos_approx<B: Backend>(x: Tensor<B, 3>) -> Tensor<B, 3> {
-    let x_c = x.clamp(-1.0, 1.0);
-    let mut theta = x_c.clone().neg().add_scalar(std::f32::consts::FRAC_PI_2).div_scalar(3.0);
-    for _ in 0..6 {
-        let t3 = theta.clone() * theta.clone() * theta.clone();
-        let cos_3t = t3.clone().mul_scalar(-1.0).add_scalar(1.0).mul_scalar(0.5) * theta.clone().mul_scalar(2.0).sin()
-            + t3.mul_scalar(4.0).sub(theta.clone()).mul_scalar(0.5);
-        let cos_3t = theta.clone().mul_scalar(3.0).cos();
-        let sin_3t = theta.clone().mul_scalar(3.0).sin().clamp(f32::EPSILON, f32::INFINITY);
-        let err = x_c.clone() - cos_3t;
-        theta = theta + err / sin_3t.mul_scalar(3.0);
+fn atan_approx<B: Backend>(x: Tensor<B, 3>) -> Tensor<B, 3> {
+    let abs_x = x.clone().abs();
+    let needs_reduction = abs_x.greater_elem(1.0);
+    let x_eff = x.clone().mask_where(needs_reduction.clone(), x.clone().recip());
+    let x2 = x_eff.clone() * x_eff.clone();
+    let mut theta = x_eff.clone() / x2.mul_scalar(0.28).add_scalar(1.0);
+    for _ in 0..12 {
+        let s = theta.clone().sin();
+        let c = theta.clone().cos();
+        theta = theta - (s - x_eff.clone() * c.clone()) * c;
     }
-    theta.clamp(0.0, std::f32::consts::PI)
+    let reduced = theta.clone().neg().add_scalar(std::f32::consts::FRAC_PI_2);
+    theta.mask_where(needs_reduction, reduced)
+}
+
+fn acos_approx<B: Backend>(x: Tensor<B, 3>) -> Tensor<B, 3> {
+    let x_c = x.clamp(-0.9999, 0.9999);
+    let ratio = x_c.clone().neg().add_scalar(1.0) / x_c.add_scalar(1.0);
+    atan_approx(ratio.sqrt()).mul_scalar(2.0)
 }
 
 fn erf_approx<B: Backend>(x: Tensor<B, 3>) -> Tensor<B, 3> {
@@ -1572,7 +1559,7 @@ pub fn zerlaut_second_dfun_batch<B: Backend>(
     let tf_i = zerlaut_tf(&e, &i_val, &e_input_inh.clone(), &i_input_inh.clone(), &w_i, e_l_i,
         g_l, c_m, q_e, tau_e, e_e, q_i, tau_i, e_i,
         n_tot, p_con_e, p_con_i, g_frac, k_ext_e, k_ext_i, &p_i);
-    let df: f32 = 1e-7;
+    let df: f32 = 1e-4;
     let df_scale: f32 = 1e3;
     let e_p = e.clone().add_scalar(df);
     let e_m = e.clone().add_scalar(-df);

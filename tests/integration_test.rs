@@ -137,6 +137,8 @@ fn test_config_validation_rejects_invalid_dt() {
         monitors: vec![],
         stimuli: vec![],
         nsig: crate::config::NsigConfig::Scalar(0.0),
+        speed: 3.0,
+        backend: "ndarray".to_string(),
     };
     assert!(cfg.validate().is_err(), "dt=0 should fail validation");
 }
@@ -163,6 +165,8 @@ fn test_config_validation_rejects_unknown_model() {
         monitors: vec![],
         stimuli: vec![],
         nsig: crate::config::NsigConfig::Scalar(0.0),
+        speed: 3.0,
+        backend: "ndarray".to_string(),
     };
     let err = cfg.validate().unwrap_err();
     let msg = format!("{}", err);
@@ -210,6 +214,8 @@ fn test_all_models_run_without_crash() {
             monitors: vec![],
             stimuli: vec![],
             nsig: crate::config::NsigConfig::Scalar(0.0),
+            speed: 3.0,
+            backend: "ndarray".to_string(),
         };
         cfg.validate().unwrap_or_else(|e| panic!("{} config should validate: {}", name, e));
 

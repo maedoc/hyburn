@@ -99,6 +99,11 @@ pub struct SimConfig {
     /// Noise amplitude for stochastic integration (scalar or per-variable).
     #[serde(default)]
     pub nsig: NsigConfig,
+    /// Signal propagation speed in mm/ms. Used to convert tract_lengths to delays
+    /// if `tract_lengths` is provided in projections but `delays` is not.
+    /// Default: 3.0 mm/ms.
+    #[serde(default = "default_speed")]
+    pub speed: f32,
     /// Compute backend: "ndarray" (CPU), "wgpu" (GPU/Metal/Vulkan), or "cuda" (NVIDIA).
     /// Overridable by CLI flag; defaults to ndarray.
     #[serde(default = "default_backend")]
@@ -107,6 +112,10 @@ pub struct SimConfig {
 
 fn default_backend() -> String {
     "ndarray".to_string()
+}
+
+fn default_speed() -> f32 {
+    3.0
 }
 
 /// Network topology: a collection of subnetworks and projections.
@@ -166,6 +175,10 @@ pub struct ProjectionConfig {
     /// Per-edge delays in integration steps.
     #[serde(default)]
     pub delays: Vec<u32>,
+    /// Per-edge tract lengths in mm. If present and `delays` is empty,
+    /// delays are computed as `ceil(tract_lengths / speed / dt)`.
+    #[serde(default)]
+    pub tract_lengths: Vec<f32>,
     /// Coupling function name.
     #[serde(default = "default_coupling")]
     pub coupling_fn: String,
@@ -410,6 +423,30 @@ impl SimConfig {
 
         Ok(())
     }
+
+    /// Convert tract_lengths to delays where delays are not explicitly provided.
+    ///
+    /// For each projection, if `delays` is empty but `tract_lengths` is non-empty,
+    /// computes `idelays = ceil(tract_length / speed / dt)` and stores in `delays`.
+    /// If both `delays` and `tract_lengths` are present, `delays` takes precedence.
+    /// Returns an error if `speed <= 0` and any `tract_lengths` are present.
+    pub fn resolve_delays(&mut self) -> Result<()> {
+        if self.speed <= 0.0 && self.network.projections.iter().any(|p| !p.tract_lengths.is_empty()) {
+            return Err(SimulationError::InvalidConfig(
+                "speed must be positive when tract_lengths are provided".into(),
+            ));
+        }
+        for proj in &mut self.network.projections {
+            if proj.delays.is_empty() && !proj.tract_lengths.is_empty() {
+                let dt = self.dt as f32;
+                let speed = self.speed;
+                proj.delays = proj.tract_lengths.iter()
+                    .map(|l| (l / speed / dt).ceil().max(0.0) as u32)
+                    .collect();
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Parameter sweep configuration (TOML-based).
@@ -520,6 +557,7 @@ initial_state = [0.0, 0.5, 0.0, 0.5]
             monitors: vec![],
             stimuli: vec![],
             nsig: NsigConfig::Scalar(0.0),
+            speed: 3.0,
             backend: "ndarray".to_string(),
         };
         assert!(cfg.validate().is_err());
@@ -553,6 +591,7 @@ initial_state = [0.0, 0.5, 0.0, 0.5]
                 monitors: vec![],
                 stimuli: vec![],
                 nsig: NsigConfig::Scalar(0.0),
+                speed: 3.0,
             backend: "ndarray".to_string(),
             };
             cfg.validate().unwrap_or_else(|e| panic!("{} failed validation: {}", name, e));
@@ -578,6 +617,7 @@ initial_state = [0.0, 0.5, 0.0, 0.5]
             monitors: vec![],
             stimuli: vec![],
             nsig: NsigConfig::Scalar(0.0),
+            speed: 3.0,
             backend: "ndarray".to_string(),
         };
         let err = cfg.validate().unwrap_err();
@@ -681,5 +721,115 @@ initial_state = [0.0, 0.5, 0.0, 0.5]
 "#;
         let cfg: SimConfig = toml::from_str(toml_str).unwrap();
         assert_eq!(cfg.integrator, IntegratorKind::Rk4Stochastic);
+    }
+
+    #[test]
+    fn test_resolve_delays_from_tract_lengths() {
+        let mut cfg = SimConfig {
+            sim_length: 100.0,
+            dt: 0.1,
+            speed: 3.0,
+            network: NetworkConfig {
+                subnetworks: vec![SubnetworkConfig {
+                    model: "Generic2dOscillator".to_string(),
+                    nnodes: 2,
+                    nmodes: 1,
+                    initial_state: InitialStateConfig::Inline(vec![0.0; 4]),
+                    params: vec![1.0, 0.0, -2.0, -10.0, 0.0, 0.02, 3.0, 1.0, 0.0, 1.0, 1.0, 1.0],
+                }],
+                projections: vec![ProjectionConfig {
+                    src: 0,
+                    tgt: 0,
+                    conn_type: "all_to_all".to_string(),
+                    weights: WeightsConfig::Scalar(1.0),
+                    delays: vec![],
+                    tract_lengths: vec![30.0, 15.0],
+                    coupling_fn: "Linear".to_string(),
+                    coupling_params: vec![1.0, 0.0],
+                    cvar_map: "0:0".to_string(),
+                }],
+            },
+            integrator: IntegratorKind::Heun,
+            monitors: vec![],
+            stimuli: vec![],
+            nsig: NsigConfig::Scalar(0.0),
+            backend: "ndarray".to_string(),
+        };
+        cfg.resolve_delays().unwrap();
+        // speed=3.0 mm/ms, dt=0.1 ms → delay = ceil(30.0 / 3.0 / 0.1) = ceil(100) = 100
+        // and ceil(15.0 / 3.0 / 0.1) = ceil(50) = 50
+        assert_eq!(cfg.network.projections[0].delays, vec![100, 50]);
+    }
+
+    #[test]
+    fn test_resolve_delays_explicit_precedence() {
+        let mut cfg = SimConfig {
+            sim_length: 100.0,
+            dt: 0.1,
+            speed: 3.0,
+            network: NetworkConfig {
+                subnetworks: vec![SubnetworkConfig {
+                    model: "Generic2dOscillator".to_string(),
+                    nnodes: 2,
+                    nmodes: 1,
+                    initial_state: InitialStateConfig::Inline(vec![0.0; 4]),
+                    params: vec![1.0, 0.0, -2.0, -10.0, 0.0, 0.02, 3.0, 1.0, 0.0, 1.0, 1.0, 1.0],
+                }],
+                projections: vec![ProjectionConfig {
+                    src: 0,
+                    tgt: 0,
+                    conn_type: "all_to_all".to_string(),
+                    weights: WeightsConfig::Scalar(1.0),
+                    delays: vec![5, 10],
+                    tract_lengths: vec![30.0, 15.0],
+                    coupling_fn: "Linear".to_string(),
+                    coupling_params: vec![1.0, 0.0],
+                    cvar_map: "0:0".to_string(),
+                }],
+            },
+            integrator: IntegratorKind::Heun,
+            monitors: vec![],
+            stimuli: vec![],
+            nsig: NsigConfig::Scalar(0.0),
+            backend: "ndarray".to_string(),
+        };
+        cfg.resolve_delays().unwrap();
+        // Explicit delays should NOT be overwritten
+        assert_eq!(cfg.network.projections[0].delays, vec![5, 10]);
+    }
+
+    #[test]
+    fn test_resolve_delays_negative_speed_error() {
+        let mut cfg = SimConfig {
+            sim_length: 100.0,
+            dt: 0.1,
+            speed: 0.0,
+            network: NetworkConfig {
+                subnetworks: vec![SubnetworkConfig {
+                    model: "Generic2dOscillator".to_string(),
+                    nnodes: 2,
+                    nmodes: 1,
+                    initial_state: InitialStateConfig::Inline(vec![0.0; 4]),
+                    params: vec![1.0, 0.0, -2.0, -10.0, 0.0, 0.02, 3.0, 1.0, 0.0, 1.0, 1.0, 1.0],
+                }],
+                projections: vec![ProjectionConfig {
+                    src: 0,
+                    tgt: 0,
+                    conn_type: "all_to_all".to_string(),
+                    weights: WeightsConfig::Scalar(1.0),
+                    delays: vec![],
+                    tract_lengths: vec![30.0],
+                    coupling_fn: "Linear".to_string(),
+                    coupling_params: vec![1.0, 0.0],
+                    cvar_map: "0:0".to_string(),
+                }],
+            },
+            integrator: IntegratorKind::Heun,
+            monitors: vec![],
+            stimuli: vec![],
+            nsig: NsigConfig::Scalar(0.0),
+            backend: "ndarray".to_string(),
+        };
+        assert!(cfg.resolve_delays().is_err());
     }
 }

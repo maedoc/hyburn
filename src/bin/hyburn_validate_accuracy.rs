@@ -50,16 +50,17 @@ fn main() {
                 },
             ],
             projections: vec![
-                ProjectionConfig { src: 0, tgt: 1, conn_type: "all_to_all".to_string(), weights: WeightsConfig::Scalar(w), coupling_fn: "Linear".to_string(), coupling_params: vec![1.0], cvar_map: "0:0".to_string(), delays: vec![0] },
-                ProjectionConfig { src: 1, tgt: 2, conn_type: "all_to_all".to_string(), weights: WeightsConfig::Scalar(w), coupling_fn: "Linear".to_string(), coupling_params: vec![1.0], cvar_map: "0:0".to_string(), delays: vec![0] },
-                ProjectionConfig { src: 2, tgt: 0, conn_type: "all_to_all".to_string(), weights: WeightsConfig::Scalar(w), coupling_fn: "Linear".to_string(), coupling_params: vec![1.0], cvar_map: "0:0".to_string(), delays: vec![0] },
+                ProjectionConfig { src: 0, tgt: 1, conn_type: "all_to_all".to_string(), weights: WeightsConfig::Scalar(w), coupling_fn: "Linear".to_string(), coupling_params: vec![1.0], cvar_map: "0:0".to_string(), delays: vec![0], tract_lengths: vec![] },
+                ProjectionConfig { src: 1, tgt: 2, conn_type: "all_to_all".to_string(), weights: WeightsConfig::Scalar(w), coupling_fn: "Linear".to_string(), coupling_params: vec![1.0], cvar_map: "0:0".to_string(), delays: vec![0], tract_lengths: vec![] },
+                ProjectionConfig { src: 2, tgt: 0, conn_type: "all_to_all".to_string(), weights: WeightsConfig::Scalar(w), coupling_fn: "Linear".to_string(), coupling_params: vec![1.0], cvar_map: "0:0".to_string(), delays: vec![0], tract_lengths: vec![] },
             ],
         },
         integrator: IntegratorKind::Heun,
         monitors: vec![],
         stimuli: vec![],
         nsig: NsigConfig::Scalar(0.0),
-            backend: "ndarray".to_string(),
+        speed: 3.0,
+        backend: "ndarray".to_string(),
     };
 
     let mut engine = BatchHybridEngine::<B>::from_config(config, 5, device).unwrap();

@@ -284,6 +284,7 @@ mod tests {
                 vec![0.0, 0.0, 0.0, 0.1, 0.0],
             ]),
             delays: vec![1u32; 5],
+            tract_lengths: vec![],
             coupling_fn: "Linear".to_string(),
             coupling_params: vec![1.0],
             cvar_map: "0:0".to_string(),
@@ -299,6 +300,7 @@ mod tests {
                 indptr: vec![0u32, 1, 2, 3, 4, 5],
             },
             delays: vec![1u32; 5],
+            tract_lengths: vec![],
             coupling_fn: "Linear".to_string(),
             coupling_params: vec![1.0],
             cvar_map: "0:0".to_string(),
@@ -315,6 +317,7 @@ mod tests {
             monitors: vec![],
             stimuli: vec![],
             nsig: crate::config::NsigConfig::Scalar(0.0),
+            speed: 3.0,
             backend: "ndarray".to_string(),
         };
 
@@ -329,6 +332,7 @@ mod tests {
             monitors: vec![],
             stimuli: vec![],
             nsig: crate::config::NsigConfig::Scalar(0.0),
+            speed: 3.0,
             backend: "ndarray".to_string(),
         };
 

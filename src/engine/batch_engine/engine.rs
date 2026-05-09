@@ -829,6 +829,7 @@ mod tests {
             monitors: vec![],
             stimuli: vec![],
             nsig: crate::config::NsigConfig::Scalar(0.0),
+            speed: 3.0,
             backend: "ndarray".to_string(),
         };
 
@@ -874,6 +875,7 @@ mod tests {
             monitors: vec![],
             stimuli: vec![],
             nsig: crate::config::NsigConfig::Scalar(0.0),
+            speed: 3.0,
             backend: "ndarray".to_string(),
         };
 
@@ -1031,16 +1033,18 @@ mod tests {
                         vec![1.0, 0.0],
                         vec![0.0, 1.0],
                     ]),
+                    delays: vec![0],
+                    tract_lengths: vec![],
                     coupling_fn: "Linear".to_string(),
                     coupling_params: vec![1.0],
                     cvar_map: "0:0".to_string(),
-                    delays: vec![0],
                 }],
             },
             integrator: IntegratorKind::Euler,
             monitors: vec![],
             stimuli: vec![],
             nsig: crate::config::NsigConfig::Scalar(0.0),
+            speed: 3.0,
             backend: "ndarray".to_string(),
         };
 
@@ -1093,6 +1097,7 @@ mod tests {
             monitors: vec![],
             stimuli: vec![],
             nsig: crate::config::NsigConfig::Scalar(0.0),
+            speed: 3.0,
             backend: "ndarray".to_string(),
         };
 
@@ -1157,6 +1162,7 @@ mod tests {
             monitors: vec![],
             stimuli: vec![],
             nsig: crate::config::NsigConfig::Scalar(0.0),
+            speed: 3.0,
             backend: "ndarray".to_string(),
         };
 
@@ -1228,6 +1234,7 @@ mod tests {
             monitors: vec![],
             stimuli: vec![],
             nsig: crate::config::NsigConfig::Scalar(0.0),
+            speed: 3.0,
             backend: "ndarray".to_string(),
         };
 
@@ -1298,6 +1305,7 @@ mod tests {
             monitors: vec![],
             stimuli: vec![],
             nsig: crate::config::NsigConfig::Scalar(0.0),
+            speed: 3.0,
             backend: "ndarray".to_string(),
         };
 
@@ -1364,6 +1372,7 @@ mod tests {
             monitors: vec![],
             stimuli: vec![],
             nsig: crate::config::NsigConfig::Scalar(0.0),
+            speed: 3.0,
             backend: "ndarray".to_string(),
         };
 
@@ -1429,6 +1438,7 @@ mod tests {
             monitors: vec![],
             stimuli: vec![],
             nsig: crate::config::NsigConfig::Scalar(0.0),
+            speed: 3.0,
             backend: "ndarray".to_string(),
         };
 
@@ -1522,10 +1532,11 @@ mod tests {
                         tgt: 1,
                         conn_type: "all_to_all".to_string(),
                         weights: WeightsConfig::Scalar(w),
+                        delays: vec![0],
+                        tract_lengths: vec![],
                         coupling_fn: "Linear".to_string(),
                         coupling_params: vec![1.0],
                         cvar_map: "0:0".to_string(),
-                        delays: vec![0],
                     },
                     crate::config::ProjectionConfig {
                         src: 1,
@@ -1536,6 +1547,7 @@ mod tests {
                         coupling_params: vec![1.0],
                         cvar_map: "0:0".to_string(),
                         delays: vec![0],
+                        tract_lengths: vec![],
                     },
                 ],
             },
@@ -1543,6 +1555,7 @@ mod tests {
             monitors: vec![],
             stimuli: vec![],
             nsig: crate::config::NsigConfig::Scalar(0.0),
+            speed: 3.0,
             backend: "ndarray".to_string(),
         };
 
@@ -1648,17 +1661,17 @@ mod tests {
                     crate::config::ProjectionConfig {
                         src: 0, tgt: 1, conn_type: "all_to_all".to_string(),
                         weights: WeightsConfig::Scalar(w), coupling_fn: "Linear".to_string(),
-                        coupling_params: vec![1.0], cvar_map: "0:0".to_string(), delays: vec![0],
+                        coupling_params: vec![1.0], cvar_map: "0:0".to_string(), delays: vec![0], tract_lengths: vec![],
                     },
                     crate::config::ProjectionConfig {
                         src: 1, tgt: 2, conn_type: "all_to_all".to_string(),
                         weights: WeightsConfig::Scalar(w), coupling_fn: "Linear".to_string(),
-                        coupling_params: vec![1.0], cvar_map: "0:0".to_string(), delays: vec![0],
+                        coupling_params: vec![1.0], cvar_map: "0:0".to_string(), delays: vec![0], tract_lengths: vec![],
                     },
                     crate::config::ProjectionConfig {
                         src: 2, tgt: 0, conn_type: "all_to_all".to_string(),
                         weights: WeightsConfig::Scalar(w), coupling_fn: "Linear".to_string(),
-                        coupling_params: vec![1.0], cvar_map: "0:0".to_string(), delays: vec![0],
+                        coupling_params: vec![1.0], cvar_map: "0:0".to_string(), delays: vec![0], tract_lengths: vec![],
                     },
                 ],
             },
@@ -1666,6 +1679,7 @@ mod tests {
             monitors: vec![],
             stimuli: vec![],
             nsig: crate::config::NsigConfig::Scalar(0.0),
+            speed: 3.0,
             backend: "ndarray".to_string(),
         };
 
@@ -1764,6 +1778,7 @@ mod tests {
                         coupling_params: vec![1.0],
                         cvar_map: "0:0".to_string(),
                         delays: vec![0],
+                        tract_lengths: vec![],
                     },
                     crate::config::ProjectionConfig {
                         src: 1, tgt: 2,
@@ -1773,6 +1788,7 @@ mod tests {
                         coupling_params: vec![1.0],
                         cvar_map: "0:0".to_string(),
                         delays: vec![0],
+                        tract_lengths: vec![],
                     },
                     crate::config::ProjectionConfig {
                         src: 2, tgt: 0,
@@ -1782,6 +1798,7 @@ mod tests {
                         coupling_params: vec![1.0],
                         cvar_map: "0:0".to_string(),
                         delays: vec![0],
+                        tract_lengths: vec![],
                     },
                 ],
             },
@@ -1789,6 +1806,7 @@ mod tests {
             monitors: vec![],
             stimuli: vec![],
             nsig: crate::config::NsigConfig::Scalar(0.0),
+            speed: 3.0,
             backend: "ndarray".to_string(),
         };
 
@@ -1848,6 +1866,7 @@ mod tests {
             monitors: vec![],
             stimuli: vec![],
             nsig: crate::config::NsigConfig::Scalar(0.0),
+            speed: 3.0,
             backend: "ndarray".to_string(),
         };
 
@@ -1919,6 +1938,7 @@ mod tests {
             monitors: vec![],
             stimuli: vec![],
             nsig: crate::config::NsigConfig::Scalar(0.0),
+            speed: 3.0,
             backend: "ndarray".to_string(),
         };
 
@@ -2012,6 +2032,7 @@ mod tests {
                 monitors: vec![],
                 stimuli: vec![],
                 nsig: crate::config::NsigConfig::Scalar(0.0),
+            speed: 3.0,
             backend: "ndarray".to_string(),
             };
 
@@ -2081,6 +2102,7 @@ mod tests {
                         coupling_params: vec![1.0],
                         cvar_map: "0:0".to_string(),
                         delays: vec![3], // 3-step delay
+                        tract_lengths: vec![],
                     },
                 ],
             },
@@ -2088,6 +2110,7 @@ mod tests {
             monitors: vec![],
             stimuli: vec![],
             nsig: crate::config::NsigConfig::Scalar(0.0),
+            speed: 3.0,
             backend: "ndarray".to_string(),
         };
 
@@ -2142,6 +2165,7 @@ mod tests {
             monitors: vec![],
             stimuli: vec![],
             nsig: crate::config::NsigConfig::Scalar(0.0),
+            speed: 3.0,
             backend: "ndarray".to_string(),
         };
 
@@ -2194,6 +2218,7 @@ mod tests {
             monitors: vec![],
             stimuli: vec![],
             nsig: crate::config::NsigConfig::Scalar(0.0),
+            speed: 3.0,
             backend: "ndarray".to_string(),
         };
 

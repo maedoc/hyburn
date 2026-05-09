@@ -46,6 +46,7 @@ fn run_model(model: &str, nnodes: usize, params: Vec<f32>, initial_state: Vec<f3
         dt,
         integrator,
         nsig: crate::config::NsigConfig::Scalar(0.0),
+        speed: 3.0,
         backend: "ndarray".to_string(),
         network: NetworkConfig {
             subnetworks: vec![SubnetworkConfig {
@@ -92,7 +93,7 @@ fn test_ref_epileptor_codim3() {
         vec![0.5, 0.5, 0.0, 0.0, 0.1, 0.1],
         0.1, IntegratorKind::Heun, 100,
     );
-    compare_final_state("EpileptorCodim3", &actual, "epileptor_codim3_ref.npy", 0.70);
+    compare_final_state("EpileptorCodim3", &actual, "epileptor_codim3_ref.npy", 0.01);
 }
 
 #[test]
@@ -103,7 +104,7 @@ fn test_ref_epileptor_codim3_slowmod() {
         vec![0.5, 0.5, 0.0, 0.0, 0.05, 0.05, 0.0, 0.0, 0.0, 0.0],
         0.1, IntegratorKind::Heun, 100,
     );
-    compare_final_state("EpileptorCodim3SlowMod", &actual, "epileptor_codim3_slowmod_ref.npy", 0.60);
+    compare_final_state("EpileptorCodim3SlowMod", &actual, "epileptor_codim3_slowmod_ref.npy", 0.01);
 }
 
 #[test]
@@ -136,7 +137,7 @@ fn test_ref_zerlaut_second() {
         vec![0.01, 0.01, 0.01, 0.01, 0.0001, 0.0001, 0.0, 0.0, 0.0001, 0.0001, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
         0.1, IntegratorKind::Euler, 100,
     );
-    compare_final_state("ZerlautAdaptationSecondOrder", &actual, "zerlaut_second_ref.npy", 0.30);
+    compare_final_state("ZerlautAdaptationSecondOrder", &actual, "zerlaut_second_ref.npy", 0.05);
 }
 
 #[test]
@@ -192,6 +193,7 @@ fn test_all_22_new_models_smoke() {
             sim_length: 1.0,
             dt: 0.1,
             backend: "ndarray".to_string(),
+            speed: 3.0,
             network: NetworkConfig {
                 subnetworks: vec![SubnetworkConfig {
                     model: name.to_string(),

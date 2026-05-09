@@ -110,6 +110,7 @@ pub fn build_sim_config_with_sc(
             conn_type: "all_to_all".to_string(),
             weights: WeightsConfig::Dense(dense),
             delays: Vec::new(),
+            tract_lengths: vec![],
             coupling_fn: "Linear".to_string(),
             coupling_params: vec![1.0],
             cvar_map: "0:0".to_string(),
@@ -311,6 +312,7 @@ mod tests {
             monitors: vec![],
             stimuli: vec![],
             nsig: crate::config::NsigConfig::Scalar(0.0),
+            speed: 3.0,
             backend: "ndarray".to_string(),
         };
         let sc = vec![0.1, 0.2, 0.3, 0.4];

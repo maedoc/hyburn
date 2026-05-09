@@ -90,6 +90,8 @@ fn test_ref_g2do_small_final_state() {
         dt: 0.1,
         integrator: IntegratorKind::Heun,
         nsig: crate::config::NsigConfig::Scalar(0.0),
+        speed: 3.0,
+        backend: "ndarray".to_string(),
         network: NetworkConfig {
             subnetworks: vec![SubnetworkConfig {
                 model: "Generic2dOscillator".to_string(),
@@ -127,6 +129,8 @@ fn test_ref_g2do_small_trajectory() {
         dt: 0.1,
         integrator: IntegratorKind::Heun,
         nsig: crate::config::NsigConfig::Scalar(0.0),
+        speed: 3.0,
+        backend: "ndarray".to_string(),
         network: NetworkConfig {
             subnetworks: vec![SubnetworkConfig {
                 model: "Generic2dOscillator".to_string(),
@@ -185,6 +189,8 @@ fn test_ref_mpr_small_final_state() {
         dt: 0.1,
         integrator: IntegratorKind::Euler,
         nsig: crate::config::NsigConfig::Scalar(0.0),
+        speed: 3.0,
+        backend: "ndarray".to_string(),
         network: NetworkConfig {
             subnetworks: vec![SubnetworkConfig {
                 model: "MontbrioPazoRoxin".to_string(),
@@ -219,6 +225,8 @@ fn test_ref_kuramoto_small_final_state() {
         dt: 0.1,
         integrator: IntegratorKind::Euler,
         nsig: crate::config::NsigConfig::Scalar(0.0),
+        speed: 3.0,
+        backend: "ndarray".to_string(),
         network: NetworkConfig {
             subnetworks: vec![SubnetworkConfig {
                 model: "Kuramoto".to_string(),
@@ -274,6 +282,8 @@ fn test_ref_g2do_74_final_state() {
         dt: 0.1,
         integrator: IntegratorKind::Heun,
         nsig: crate::config::NsigConfig::Scalar(0.0),
+        speed: 3.0,
+        backend: "ndarray".to_string(),
         network: NetworkConfig {
             subnetworks: vec![SubnetworkConfig {
                 model: "Generic2dOscillator".to_string(),
@@ -350,6 +360,8 @@ fn test_ref_g2do_sweep_final_states() {
             dt: 0.1,
             integrator: IntegratorKind::Heun,
             nsig: crate::config::NsigConfig::Scalar(0.0),
+        speed: 3.0,
+        backend: "ndarray".to_string(),
             network: NetworkConfig {
                 subnetworks: vec![SubnetworkConfig {
                     model: "Generic2dOscillator".to_string(),
@@ -460,6 +472,8 @@ fn test_ref_bold_e2e() {
         dt: 0.1,
         integrator: IntegratorKind::Heun,
         nsig: crate::config::NsigConfig::Scalar(0.0),
+        speed: 3.0,
+        backend: "ndarray".to_string(),
         network: NetworkConfig {
             subnetworks: vec![SubnetworkConfig {
                 model: "Generic2dOscillator".to_string(),
@@ -507,6 +521,8 @@ fn test_ref_features_classic() {
         dt: 0.1,
         integrator: IntegratorKind::Heun,
         nsig: crate::config::NsigConfig::Scalar(0.0),
+        speed: 3.0,
+        backend: "ndarray".to_string(),
         network: NetworkConfig {
             subnetworks: vec![SubnetworkConfig {
                 model: "Generic2dOscillator".to_string(),
@@ -584,6 +600,8 @@ fn test_ref_features_spectral() {
         dt: 0.1,
         integrator: IntegratorKind::Heun,
         nsig: crate::config::NsigConfig::Scalar(0.0),
+        speed: 3.0,
+        backend: "ndarray".to_string(),
         network: NetworkConfig {
             subnetworks: vec![SubnetworkConfig {
                 model: "Generic2dOscillator".to_string(),
@@ -770,6 +788,8 @@ fn test_ref_jr_coupling_psd_sweep() {
             dt,
             integrator: IntegratorKind::Heun,
             nsig: crate::config::NsigConfig::Scalar(0.0),
+            speed: 3.0,
+            backend: "ndarray".to_string(),
             network: NetworkConfig {
                 subnetworks: vec![SubnetworkConfig {
                     model: "JansenRit".to_string(),
@@ -788,6 +808,7 @@ fn test_ref_jr_coupling_psd_sweep() {
                         indptr: csr_indptr.clone(),
                     },
                     delays: csr_idelays.clone(),
+                    tract_lengths: vec![],
                     coupling_fn: "Linear".to_string(),
                     coupling_params: coupling_params,
                     cvar_map: "0:0".to_string(),

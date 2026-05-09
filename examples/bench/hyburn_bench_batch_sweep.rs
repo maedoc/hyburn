@@ -108,6 +108,7 @@ fn main() {
                             coupling_params: vec![1.0],
                             cvar_map: "0:0".to_string(),
                             delays: vec![0],
+                            tract_lengths: vec![],
                         },
                         ProjectionConfig {
                             src: 1, tgt: 2,
@@ -117,6 +118,7 @@ fn main() {
                             coupling_params: vec![1.0],
                             cvar_map: "0:0".to_string(),
                             delays: vec![0],
+                            tract_lengths: vec![],
                         },
                         ProjectionConfig {
                             src: 2, tgt: 0,
@@ -126,6 +128,7 @@ fn main() {
                             coupling_params: vec![1.0],
                             cvar_map: "0:0".to_string(),
                             delays: vec![0],
+                            tract_lengths: vec![],
                         },
                     ],
                 },
@@ -133,6 +136,7 @@ fn main() {
                 monitors: vec![],
                 stimuli: vec![],
                 nsig: NsigConfig::Scalar(0.0),
+                speed: 3.0,
             backend: "ndarray".to_string(),
             };
 
@@ -255,6 +259,7 @@ fn main() {
                                 coupling_params: vec![1.0],
                                 cvar_map: "0:0".to_string(),
                                 delays: vec![0],
+                                tract_lengths: vec![],
                             },
                             ProjectionConfig {
                                 src: 1, tgt: 2,
@@ -264,6 +269,7 @@ fn main() {
                                 coupling_params: vec![1.0],
                                 cvar_map: "0:0".to_string(),
                                 delays: vec![0],
+                                tract_lengths: vec![],
                             },
                             ProjectionConfig {
                                 src: 2, tgt: 0,
@@ -273,6 +279,7 @@ fn main() {
                                 coupling_params: vec![1.0],
                                 cvar_map: "0:0".to_string(),
                                 delays: vec![0],
+                                tract_lengths: vec![],
                             },
                         ],
                     },
@@ -280,6 +287,7 @@ fn main() {
                     monitors: vec![],
                     stimuli: vec![],
                     nsig: NsigConfig::Scalar(0.0),
+                    speed: 3.0,
             backend: "ndarray".to_string(),
                 };
 

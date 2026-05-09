@@ -57,6 +57,7 @@ fn make_3subnet_config(nnodes: usize) -> SimConfig {
                     conn_type: "all_to_all".to_string(),
                     weights: WeightsConfig::Scalar(0.01),
                     delays: vec![],
+                    tract_lengths: vec![],
                     coupling_fn: "Linear".to_string(),
                     coupling_params: vec![0.01],
                     cvar_map: "0:0".to_string(),
@@ -66,6 +67,7 @@ fn make_3subnet_config(nnodes: usize) -> SimConfig {
                     conn_type: "all_to_all".to_string(),
                     weights: WeightsConfig::Scalar(0.01),
                     delays: vec![],
+                    tract_lengths: vec![],
                     coupling_fn: "Linear".to_string(),
                     coupling_params: vec![0.01],
                     cvar_map: "0:0".to_string(),
@@ -75,6 +77,7 @@ fn make_3subnet_config(nnodes: usize) -> SimConfig {
                     conn_type: "all_to_all".to_string(),
                     weights: WeightsConfig::Scalar(0.01),
                     delays: vec![],
+                    tract_lengths: vec![],
                     coupling_fn: "Linear".to_string(),
                     coupling_params: vec![0.01],
                     cvar_map: "0:0".to_string(),
@@ -85,6 +88,7 @@ fn make_3subnet_config(nnodes: usize) -> SimConfig {
         monitors: vec![],
         stimuli: vec![],
         nsig: NsigConfig::Scalar(0.0),
+        speed: 3.0,
             backend: "ndarray".to_string(),
     }
 }

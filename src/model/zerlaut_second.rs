@@ -82,8 +82,6 @@ mod tests {
             assert!(d[i].is_finite(), "d[{}] not finite: {}", i, d[i]);
         }
         let rel_err_de = (d[0] - 0.00365182).abs() / 0.00365182;
-        eprintln!("dE={} (expected 0.00365182, rel_err={rel_err_de:.4})", d[0]);
-        eprintln!("dI={} dC_ee={} dC_ei={} dC_ii={} dW_e={}", d[1], d[2], d[3], d[4], d[5]);
-        assert!(rel_err_de < 0.05, "dE rel_err={rel_err_de:.4}");
+        assert!(rel_err_de < 0.01, "dE rel_err={rel_err_de:.6}");
     }
 }

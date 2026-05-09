@@ -91,16 +91,17 @@ fn main() {
                 },
             ],
             projections: vec![
-                ProjectionConfig { src: 0, tgt: 1, conn_type: "all_to_all".to_string(), weights: WeightsConfig::Scalar(0.01), delays: vec![], coupling_fn: "Linear".to_string(), coupling_params: vec![0.01], cvar_map: "0:0".to_string() },
-                ProjectionConfig { src: 1, tgt: 2, conn_type: "all_to_all".to_string(), weights: WeightsConfig::Scalar(0.01), delays: vec![], coupling_fn: "Linear".to_string(), coupling_params: vec![0.01], cvar_map: "0:0".to_string() },
-                ProjectionConfig { src: 2, tgt: 0, conn_type: "all_to_all".to_string(), weights: WeightsConfig::Scalar(0.01), delays: vec![], coupling_fn: "Linear".to_string(), coupling_params: vec![0.01], cvar_map: "0:0".to_string() },
+                ProjectionConfig { src: 0, tgt: 1, conn_type: "all_to_all".to_string(), weights: WeightsConfig::Scalar(0.01), delays: vec![], tract_lengths: vec![], coupling_fn: "Linear".to_string(), coupling_params: vec![0.01], cvar_map: "0:0".to_string() },
+                ProjectionConfig { src: 1, tgt: 2, conn_type: "all_to_all".to_string(), weights: WeightsConfig::Scalar(0.01), delays: vec![], tract_lengths: vec![], coupling_fn: "Linear".to_string(), coupling_params: vec![0.01], cvar_map: "0:0".to_string() },
+                ProjectionConfig { src: 2, tgt: 0, conn_type: "all_to_all".to_string(), weights: WeightsConfig::Scalar(0.01), delays: vec![], tract_lengths: vec![], coupling_fn: "Linear".to_string(), coupling_params: vec![0.01], cvar_map: "0:0".to_string() },
             ],
         },
         integrator: hyburn::engine::IntegratorKind::Heun,
         monitors: vec![],
         stimuli: vec![],
         nsig: NsigConfig::Scalar(0.0),
-            backend: "ndarray".to_string(),
+        speed: 3.0,
+        backend: "ndarray".to_string(),
     };
 
     println!("=== Serial HybridEngine Comparison (I_ext = 0.0) ===");
