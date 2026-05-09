@@ -28,6 +28,7 @@ pub use batch_engine::rayon_batch_sweep;
 pub use monitor::{
     Monitor, RawMonitor, TemporalAverageMonitor, SubSampleMonitor,
     GlobalAverageMonitor, AfferentCouplingMonitor, ProjectionMonitor,
+    SensorProjectionMonitor, SpatialAverageMonitor,
 };
 pub use bold_monitor::BoldMonitor;
 pub use sweep::{serial_sweep, SweepConfig, SweepResult};

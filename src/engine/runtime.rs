@@ -8,6 +8,7 @@ use crate::io::tensor_to_flat_f32;
 use crate::error::{Result, SimulationError};
 
 use super::construction::{HybridEngine, IntegratorKind, CKPT_MAGIC, CKPT_VERSION};
+use super::monitor::Monitor;
 use super::sparse::sparse_coupling;
 
 impl<B: Backend> HybridEngine<B> {
@@ -25,6 +26,18 @@ impl<B: Backend> HybridEngine<B> {
     pub fn flush_bold_monitors(&mut self) {
         for monitor in self.bold_monitors.iter_mut() {
             let _ = monitor.flush();
+        }
+    }
+
+    /// Flush all monitors (BOLD, sensor projection, spatial average) and
+    /// return collected data per monitor type.
+    pub fn flush_all_monitors(&mut self) {
+        self.flush_bold_monitors();
+        for monitor in self.sensor_monitors.iter_mut() {
+            let _ = Monitor::<B>::flush(monitor);
+        }
+        for monitor in self.spatial_monitors.iter_mut() {
+            let _ = Monitor::<B>::flush(monitor);
         }
     }
 
@@ -341,6 +354,22 @@ impl<B: Backend> HybridEngine<B> {
         for state in &self.states {
             let (flat, _shape) = tensor_to_flat_f32(state.clone());
             self.trajectory.extend_from_slice(&flat);
+        }
+
+        // 4b. Record sensor projection and spatial average monitors.
+        for (mi, monitor) in self.sensor_monitors.iter_mut().enumerate() {
+            let target = self.sensor_monitor_targets[mi];
+            if target >= n_subs {
+                continue;
+            }
+            Monitor::<B>::record(monitor, &self.states[target], self.step, self.step as f64 * self.dt);
+        }
+        for (mi, monitor) in self.spatial_monitors.iter_mut().enumerate() {
+            let target = self.spatial_monitor_targets[mi];
+            if target >= n_subs {
+                continue;
+            }
+            Monitor::<B>::record(monitor, &self.states[target], self.step, self.step as f64 * self.dt);
         }
 
         // 5. Accumulate BOLD neural input (GPU-path: accumulate on device, sync only when period elapses)

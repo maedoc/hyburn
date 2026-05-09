@@ -425,6 +425,252 @@ impl<B: Backend> Monitor<B> for ProjectionMonitor {
         1
     }
 }
+// ============================================================
+// SensorProjectionMonitor
+// ============================================================
+
+/// Sensor projection monitor — projects neural activity through a gain
+/// matrix to produce sensor-space signals (EEG/MEG/iEEG).
+///
+/// For each recorded step, the monitor:
+/// 1. Extracts the specified variables of interest (`voi`) from the state
+///    tensor `[nvar, nnodes, nmodes]`, averaging over modes.
+/// 2. Multiplies each extracted variable's per-node activity by the gain
+///    matrix `[n_sensors, n_regions]` to get sensor-space signals.
+/// 3. Accumulates over `period` steps and stores temporal averages.
+///
+/// Output per averaged time point: `[n_sensors * n_voi]` values, ordered
+/// as `[sensors_for_voi0..., sensors_for_voi1...]`.
+pub struct SensorProjectionMonitor {
+    /// Gain matrix `[n_sensors][n_regions]`.
+    pub gain: Vec<Vec<f32>>,
+    /// Indices of variables of interest (0-based into nvar dimension).
+    pub voi: Vec<usize>,
+    /// Temporal averaging period in simulation steps.
+    pub period: usize,
+    /// Accumulator for temporal averaging.
+    accumulator: Vec<f32>,
+    /// Number of steps accumulated in the current window.
+    accumulator_count: usize,
+    /// Recorded data (temporal averages).
+    pub data: Vec<f32>,
+    /// Number of sensors.
+    pub n_sensors: usize,
+    /// Number of regions (nodes).
+    pub n_regions: usize,
+    /// Number of state variables.
+    nvar: usize,
+    /// Number of modes.
+    nmodes: usize,
+}
+
+impl SensorProjectionMonitor {
+    pub fn new(
+        gain: Vec<Vec<f32>>,
+        voi: Vec<usize>,
+        period: usize,
+        nvar: usize,
+        n_regions: usize,
+        nmodes: usize,
+    ) -> Self {
+        assert!(period > 0, "period must be > 0");
+        let n_sensors = gain.len();
+        let n_voi = voi.len().max(1);
+        let output_size = n_sensors * n_voi;
+        Self {
+            gain,
+            voi,
+            period,
+            accumulator: vec![0.0; output_size],
+            accumulator_count: 0,
+            data: Vec::new(),
+            n_sensors,
+            n_regions,
+            nvar,
+            nmodes,
+        }
+    }
+
+    /// Compute sensor signals from a flat state vector `[nvar * n_regions * nmodes]`.
+    fn compute_sensor_signal(&self, flat: &[f32]) -> Vec<f32> {
+        let n_voi = self.voi.len();
+        let mut signal = Vec::with_capacity(self.n_sensors * n_voi);
+
+        for &vi in &self.voi {
+            // Extract variable vi, averaged over modes: node_activity[n] = mean_m(flat[vi * n_regions * nmodes + n * nmodes + m])
+            let node_activity: Vec<f32> = (0..self.n_regions).map(|n| {
+                let sum: f32 = (0..self.nmodes).map(|m| {
+                    flat[vi * self.n_regions * self.nmodes + n * self.nmodes + m]
+                }).sum();
+                sum / self.nmodes as f32
+            }).collect();
+
+            // Multiply: sensor = gain * node_activity
+            for s in 0..self.n_sensors {
+                let val: f32 = self.gain[s].iter()
+                    .zip(node_activity.iter())
+                    .map(|(g, a)| g * a)
+                    .sum();
+                signal.push(val);
+            }
+        }
+        signal
+    }
+}
+
+impl<B: Backend> Monitor<B> for SensorProjectionMonitor {
+    fn record(&mut self, state: &Tensor<B, 3>, _step: usize, _t: f64) {
+        let (flat, shape) = crate::io::tensor_to_flat_f32(state.clone());
+        debug_assert_eq!(shape, vec![self.nvar, self.n_regions, self.nmodes]);
+
+        let signal = self.compute_sensor_signal(&flat);
+        for (a, v) in self.accumulator.iter_mut().zip(signal.iter()) {
+            *a += *v;
+        }
+        self.accumulator_count += 1;
+
+        if self.accumulator_count >= self.period {
+            let inv = 1.0 / self.accumulator_count as f32;
+            for a in self.accumulator.iter_mut() {
+                self.data.push(*a * inv);
+                *a = 0.0;
+            }
+            self.accumulator_count = 0;
+        }
+    }
+
+    fn flush(&mut self) -> Vec<f32> {
+        if self.accumulator_count > 0 {
+            let inv = 1.0 / self.accumulator_count as f32;
+            for a in self.accumulator.iter_mut() {
+                self.data.push(*a * inv);
+                *a = 0.0;
+            }
+            self.accumulator_count = 0;
+        }
+        std::mem::take(&mut self.data)
+    }
+
+    fn period(&self) -> usize {
+        self.period
+    }
+}
+
+// ============================================================
+// SpatialAverageMonitor
+// ============================================================
+
+/// Spatial average monitor — computes a weighted spatial average of each
+/// state variable over nodes using a mask vector.
+///
+/// For each recorded step and each state variable `v`:
+/// `output[v] = sum_n(mask[n] * state[v,n,:]) / sum_n(mask[n])`
+/// where modes are averaged out.
+///
+/// If `mask` is all ones, this reduces to a uniform spatial average.
+pub struct SpatialAverageMonitor {
+    /// Weighting mask `[n_regions]`.
+    pub mask: Vec<f32>,
+    /// Temporal averaging period in simulation steps.
+    pub period: usize,
+    /// Accumulator for temporal averaging.
+    accumulator: Vec<f32>,
+    /// Number of steps accumulated in the current window.
+    accumulator_count: usize,
+    /// Recorded data (temporal averages).
+    pub data: Vec<f32>,
+    /// Number of state variables.
+    nvar: usize,
+    /// Number of regions (nodes).
+    n_regions: usize,
+    /// Number of modes.
+    nmodes: usize,
+    /// Pre-computed sum of mask weights for normalization.
+    mask_sum: f32,
+}
+
+impl SpatialAverageMonitor {
+    pub fn new(mask: Vec<f32>, period: usize, nvar: usize, n_regions: usize, nmodes: usize) -> Self {
+        assert!(period > 0, "period must be > 0");
+        let mask_sum: f32 = mask.iter().sum();
+        Self {
+            mask,
+            period,
+            accumulator: vec![0.0; nvar],
+            accumulator_count: 0,
+            data: Vec::new(),
+            nvar,
+            n_regions,
+            nmodes,
+            mask_sum,
+        }
+    }
+
+    /// Compute spatial averages from a flat state vector `[nvar * n_regions * nmodes]`.
+    fn compute_spatial_average(&self, flat: &[f32]) -> Vec<f32> {
+        let mut avg = vec![0.0f32; self.nvar];
+        let inv_mask = if self.mask_sum.abs() < 1e-12 {
+            1.0 // avoid division by zero
+        } else {
+            1.0 / self.mask_sum
+        };
+        let inv_nmodes = 1.0 / self.nmodes as f32;
+
+        #[allow(clippy::needless_range_loop)]
+        for v in 0..self.nvar {
+            let mut sum = 0.0f32;
+            for n in 0..self.n_regions {
+                let mut mode_sum = 0.0f32;
+                for m in 0..self.nmodes {
+                    let idx = v * self.n_regions * self.nmodes + n * self.nmodes + m;
+                    mode_sum += flat[idx];
+                }
+                sum += self.mask[n] * mode_sum * inv_nmodes;
+            }
+            avg[v] = sum * inv_mask;
+        }
+        avg
+    }
+}
+
+impl<B: Backend> Monitor<B> for SpatialAverageMonitor {
+    fn record(&mut self, state: &Tensor<B, 3>, _step: usize, _t: f64) {
+        let (flat, shape) = crate::io::tensor_to_flat_f32(state.clone());
+        debug_assert_eq!(shape, vec![self.nvar, self.n_regions, self.nmodes]);
+
+        let avg = self.compute_spatial_average(&flat);
+        for (a, v) in self.accumulator.iter_mut().zip(avg.iter()) {
+            *a += *v;
+        }
+        self.accumulator_count += 1;
+
+        if self.accumulator_count >= self.period {
+            let inv = 1.0 / self.accumulator_count as f32;
+            for a in self.accumulator.iter_mut() {
+                self.data.push(*a * inv);
+                *a = 0.0;
+            }
+            self.accumulator_count = 0;
+        }
+    }
+
+    fn flush(&mut self) -> Vec<f32> {
+        if self.accumulator_count > 0 {
+            let inv = 1.0 / self.accumulator_count as f32;
+            for a in self.accumulator.iter_mut() {
+                self.data.push(*a * inv);
+                *a = 0.0;
+            }
+            self.accumulator_count = 0;
+        }
+        std::mem::take(&mut self.data)
+    }
+
+    fn period(&self) -> usize {
+        self.period
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -552,8 +798,109 @@ mod tests {
 
 
     #[test]
+    fn test_sensor_projection_monitor() {
+        // 2 sensors, 3 regions, nvar=2, nmodes=1, voi=[0]
+        // Gain: sensor 0 sums all regions, sensor 1 takes difference
+        let gain = vec![
+            vec![1.0, 1.0, 1.0],
+            vec![1.0, -1.0, 0.0],
+        ];
+        let voi = vec![0];
+        let mut m = SensorProjectionMonitor::new(gain, voi, 1, 2, 3, 1);
+
+        // state: [nvar=2, nnodes=3, nmodes=1]
+        // var0 = [1, 2, 3], var1 = [4, 5, 6]
+        let s = make_state(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3, 1]);
+        <SensorProjectionMonitor as Monitor<B>>::record(&mut m, &s, 0, 0.0);
+
+        // sensor0: 1*1 + 1*2 + 1*3 = 6.0
+        // sensor1: 1*1 + (-1)*2 + 0*3 = -1.0
+        let flushed = <SensorProjectionMonitor as Monitor<B>>::flush(&mut m);
+        assert_eq!(flushed.len(), 2);
+        assert!((flushed[0] - 6.0).abs() < 1e-5, "sensor0 = {}", flushed[0]);
+        assert!((flushed[1] - (-1.0)).abs() < 1e-5, "sensor1 = {}", flushed[1]);
+    }
+
+    #[test]
+    fn test_sensor_projection_monitor_multiple_voi() {
+        // 1 sensor, 2 regions, nvar=2, nmodes=1, voi=[0, 1]
+        let gain = vec![vec![1.0, 1.0]];
+        let voi = vec![0, 1];
+        let mut m = SensorProjectionMonitor::new(gain, voi, 2, 2, 2, 1);
+
+        // state step 0: var0=[1,2], var1=[3,4]
+        let s0 = make_state(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2, 1]);
+        // state step 1: var0=[5,6], var1=[7,8]
+        let s1 = make_state(vec![5.0, 6.0, 7.0, 8.0], vec![2, 2, 1]);
+
+        <SensorProjectionMonitor as Monitor<B>>::record(&mut m, &s0, 0, 0.0);
+        <SensorProjectionMonitor as Monitor<B>>::record(&mut m, &s1, 1, 0.1);
+
+        // After period=2, temporal average:
+        // voi=0: sensor = mean((1+2), (5+6)) = mean(3, 11) = 7.0
+        // voi=1: sensor = mean((3+4), (7+8)) = mean(7, 15) = 11.0
+        let flushed = <SensorProjectionMonitor as Monitor<B>>::flush(&mut m);
+        assert_eq!(flushed.len(), 2);
+        assert!((flushed[0] - 7.0).abs() < 1e-5, "voi0 sensor = {}", flushed[0]);
+        assert!((flushed[1] - 11.0).abs() < 1e-5, "voi1 sensor = {}", flushed[1]);
+    }
+
+    #[test]
+    fn test_spatial_average_monitor() {
+        // Uniform mask (all ones), nvar=2, n_regions=3, nmodes=1
+        let mask = vec![1.0, 1.0, 1.0];
+        let mut m = SpatialAverageMonitor::new(mask, 1, 2, 3, 1);
+
+        // state: var0=[1,2,3], var1=[4,5,6]
+        let s = make_state(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3, 1]);
+        <SpatialAverageMonitor as Monitor<B>>::record(&mut m, &s, 0, 0.0);
+
+        let flushed = <SpatialAverageMonitor as Monitor<B>>::flush(&mut m);
+        // var0 avg = (1+2+3)/3 = 2.0, var1 avg = (4+5+6)/3 = 5.0
+        assert_eq!(flushed.len(), 2);
+        assert!((flushed[0] - 2.0).abs() < 1e-5);
+        assert!((flushed[1] - 5.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_spatial_average_monitor_weighted() {
+        // Weighted mask, nvar=1, n_regions=2, nmodes=1
+        let mask = vec![2.0, 3.0];
+        let mut m = SpatialAverageMonitor::new(mask, 1, 1, 2, 1);
+
+        // state: var0=[4, 6]
+        let s = make_state(vec![4.0, 6.0], vec![1, 2, 1]);
+        <SpatialAverageMonitor as Monitor<B>>::record(&mut m, &s, 0, 0.0);
+
+        let flushed = <SpatialAverageMonitor as Monitor<B>>::flush(&mut m);
+        // var0 avg = (2*4 + 3*6)/(2+3) = (8+18)/5 = 26/5 = 5.2
+        assert_eq!(flushed.len(), 1);
+        assert!((flushed[0] - 5.2).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_spatial_average_monitor_with_modes() {
+        // Uniform mask, nvar=1, n_regions=2, nmodes=2
+        let mask = vec![1.0, 1.0];
+        let mut m = SpatialAverageMonitor::new(mask, 2, 1, 2, 2);
+
+        // state: [nvar=1, nnodes=2, nmodes=2]
+        // var0: node0=[10,20], node1=[30,40]
+        let s = make_state(vec![10.0, 20.0, 30.0, 40.0], vec![1, 2, 2]);
+        <SpatialAverageMonitor as Monitor<B>>::record(&mut m, &s, 0, 0.0);
+
+        let flushed = <SpatialAverageMonitor as Monitor<B>>::flush(&mut m);
+        // var0: node0 avg over modes = (10+20)/2=15, node1 avg = (30+40)/2=35
+        // spatial avg = (15+35)/2 = 25.0
+        assert_eq!(flushed.len(), 1);
+        assert!((flushed[0] - 25.0).abs() < 1e-5);
+    }
+
+    #[test]
     fn test_monitor_trait_object_safety() {
         // Verify that monitors can be used as trait objects.
+        let gain = vec![vec![1.0]];
+        let mask = vec![1.0];
         let mut monitors: Vec<Box<dyn Monitor<B>>> = vec![
             Box::new(RawMonitor::new(1, 1, 1)),
             Box::new(TemporalAverageMonitor::new(1, 1, 1, 2)),
@@ -561,6 +908,8 @@ mod tests {
             Box::new(GlobalAverageMonitor::new(1, 1, 1)),
             Box::new(AfferentCouplingMonitor::new(1, 1)),
             Box::new(ProjectionMonitor::new()),
+            Box::new(SensorProjectionMonitor::new(gain, vec![0], 1, 1, 1, 1)),
+            Box::new(SpatialAverageMonitor::new(mask, 1, 1, 1, 1)),
         ];
         let s = make_state(vec![1.0], vec![1, 1, 1]);
         for (step, monitor) in monitors.iter_mut().enumerate() {
@@ -568,8 +917,6 @@ mod tests {
         }
         for monitor in monitors.iter_mut() {
             let d = monitor.flush();
-            // The flush itself must not panic; some monitors may be empty
-            // depending on step alignment, which is fine.
             let _ = d.len();
         }
     }

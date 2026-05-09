@@ -253,6 +253,14 @@ pub struct HybridEngine<B: Backend> {
     /// Per-monitor accumulation counters: how many neural steps have been
     /// accumulated for each BOLD monitor. Indices match bold_monitors.
     pub bold_accumulator_counts: Vec<usize>,
+    /// Active sensor projection monitors (EEG/MEG/iEEG).
+    pub sensor_monitors: Vec<crate::engine::monitor::SensorProjectionMonitor>,
+    /// Target subnetwork index for each sensor monitor.
+    pub sensor_monitor_targets: Vec<usize>,
+    /// Active spatial average monitors.
+    pub spatial_monitors: Vec<crate::engine::monitor::SpatialAverageMonitor>,
+    /// Target subnetwork index for each spatial average monitor.
+    pub spatial_monitor_targets: Vec<usize>,
 }
 
 /// Checkpoint constants.
@@ -379,6 +387,10 @@ progress: None,
             bold_monitors: vec![],
             bold_accumulators: vec![],
             bold_accumulator_counts: vec![],
+            sensor_monitors: vec![],
+            sensor_monitor_targets: vec![],
+            spatial_monitors: vec![],
+            spatial_monitor_targets: vec![],
         }
     }
 
@@ -586,16 +598,20 @@ progress: None,
 
         // Parse BOLD monitors from config.
         let mut bold_monitors = Vec::new();
+        let mut sensor_monitors = Vec::new();
+        let mut sensor_monitor_targets = Vec::new();
+        let mut spatial_monitors = Vec::new();
+        let mut spatial_monitor_targets = Vec::new();
+
         for mon_cfg in &cfg.monitors {
             let mon_type = mon_cfg.monitor_type.to_ascii_lowercase();
             if mon_type == "bold" {
-                let target = 0usize; // default to subnetwork 0 if not specified
+                let target = 0usize;
                 if target >= subnetworks.len() {
                     log::warn!("BOLD monitor target {} out of range ({} subnets); skipping", target, subnetworks.len());
                     continue;
                 }
                 let bold_period = mon_cfg.bold_period.unwrap_or_else(|| {
-                    // Derive from period (ms) / dt
                     let period_ms = mon_cfg.period.unwrap_or(2000.0);
                     (period_ms / cfg.dt).max(1.0).round() as usize
                 });
@@ -613,6 +629,90 @@ progress: None,
                     None,
                 );
                 bold_monitors.push(bm);
+            } else if mon_type == "eeg" || mon_type == "meg" || mon_type == "ieeg" {
+                let target = 0usize;
+                if target >= subnetworks.len() {
+                    log::warn!("Sensor monitor target {} out of range; skipping", target);
+                    continue;
+                }
+                let sub = &subnetworks[target];
+                let nvar = sub.nvar;
+                let nnodes = sub.nnodes;
+                let nmodes = sub.nmodes;
+
+                let gain = if let Some(ref g) = mon_cfg.gain {
+                    g.clone()
+                } else if let Some(ref path) = mon_cfg.gain_path {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        match crate::io::read_npy_f32(path) {
+                            Ok((data, shape)) => {
+                                if shape.len() != 2 {
+                                    log::warn!("Gain matrix NPY must be 2D, got {}D; skipping monitor", shape.len());
+                                    continue;
+                                }
+                                let n_sensors = shape[0];
+                                let n_regions = shape[1];
+                                let mut gain = vec![vec![0.0f32; n_regions]; n_sensors];
+                                for (i, row) in gain.iter_mut().enumerate() {
+                                    for (j, val) in row.iter_mut().enumerate() {
+                                        *val = data[i * n_regions + j];
+                                    }
+                                }
+                                gain
+                            }
+                            Err(e) => {
+                                log::warn!("Failed to read gain matrix from {}: {:?}; skipping monitor", path, e);
+                                continue;
+                            }
+                        }
+                    }
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        log::warn!("gain_path not supported in WASM; skipping sensor monitor");
+                        continue;
+                    }
+                } else {
+                    log::warn!("Sensor projection monitor requires gain or gain_path; skipping");
+                    continue;
+                };
+
+                let voi = mon_cfg.voi.clone().unwrap_or_else(|| vec![0]);
+                let period_steps = mon_cfg.period
+                    .map(|p_ms| (p_ms / cfg.dt).max(1.0).round() as usize)
+                    .unwrap_or(1);
+
+                let sm = crate::engine::monitor::SensorProjectionMonitor::new(
+                    gain, voi, period_steps, nvar, nnodes, nmodes,
+                );
+                sensor_monitors.push(sm);
+                sensor_monitor_targets.push(target);
+            } else if mon_type == "spatialaverage" {
+                let target = 0usize;
+                if target >= subnetworks.len() {
+                    log::warn!("Spatial average monitor target {} out of range; skipping", target);
+                    continue;
+                }
+                let sub = &subnetworks[target];
+                let nvar = sub.nvar;
+                let nnodes = sub.nnodes;
+                let nmodes = sub.nmodes;
+
+                let mask = mon_cfg.spatial_mask.clone().unwrap_or_else(|| vec![1.0; nnodes]);
+                if mask.len() != nnodes {
+                    log::warn!("Spatial mask length {} != nnodes {}; skipping monitor", mask.len(), nnodes);
+                    continue;
+                }
+
+                let period_steps = mon_cfg.period
+                    .map(|p_ms| (p_ms / cfg.dt).max(1.0).round() as usize)
+                    .unwrap_or(1);
+
+                let sm = crate::engine::monitor::SpatialAverageMonitor::new(
+                    mask, period_steps, nvar, nnodes, nmodes,
+                );
+                spatial_monitors.push(sm);
+                spatial_monitor_targets.push(target);
             }
         }
 
@@ -634,6 +734,10 @@ progress: None,
             bold_accumulators: vec![],
             bold_accumulator_counts: vec![0; bold_monitors.len()],
             bold_monitors,
+            sensor_monitors,
+            sensor_monitor_targets,
+            spatial_monitors,
+            spatial_monitor_targets,
         })
     }
 }

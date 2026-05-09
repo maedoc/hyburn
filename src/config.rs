@@ -184,6 +184,18 @@ pub struct MonitorConfig {
     /// Number of neural steps between BW integrations (BOLD-specific).  Default = 10.
     #[serde(default = "default_bold_period")]
     pub bold_period: Option<usize>,
+    /// Gain matrix `[n_sensors][n_regions]` for EEG/MEG/iEEG monitors.
+    #[serde(default)]
+    pub gain: Option<Vec<Vec<f32>>>,
+    /// Path to NPY file containing gain matrix for EEG/MEG/iEEG monitors.
+    #[serde(default)]
+    pub gain_path: Option<String>,
+    /// Variable of interest indices (0-based into nvar) for sensor projection.
+    #[serde(default)]
+    pub voi: Option<Vec<usize>>,
+    /// Spatial averaging mask `[n_regions]` for SpatialAverage monitor.
+    #[serde(default)]
+    pub spatial_mask: Option<Vec<f32>>,
 }
 
 fn default_tr() -> Option<f64> {
