@@ -7,7 +7,7 @@ use crate::engine::{EngineModel, IntegratorKind};
 use crate::engine::parse_cvar_map;
 use crate::error::SimulationError;
 
-use super::dfun::{dfun_batch, clamp_batch, model_prefers_heun, model_param_slice};
+use super::dfun::{dfun_batch, dfun_batch_multi, clamp_batch, model_prefers_heun, model_param_slice};
 use super::projection::{PrecomputedProjection, ProjectionWeightKind};
 
 /// Result of a generic batch sweep.
@@ -36,6 +36,57 @@ pub struct SweepParam {
     pub sub_idx: usize,
     /// Parameter index within that subnetwork's params.
     pub param_idx: usize,
+}
+
+/// A single dimension of a parameter sweep.
+#[derive(Debug, Clone)]
+pub struct SweepPoint {
+    /// Subnetwork index this parameter belongs to.
+    pub sub_idx: usize,
+    /// Parameter index within that subnetwork's params.
+    pub param_idx: usize,
+    /// Values to sweep over for this dimension.
+    pub values: Vec<f32>,
+}
+
+/// Multi-parameter sweep specification.
+/// The Cartesian product of all SweepPoint values produces n_sweep total points.
+#[derive(Debug, Clone)]
+pub struct SweepSpec {
+    /// One swept parameter per dimension.
+    pub points: Vec<SweepPoint>,
+}
+
+impl SweepSpec {
+    /// Total number of sweep points (Cartesian product size).
+    pub fn n_sweep(&self) -> usize {
+        self.points.iter().map(|p| p.values.len()).product()
+    }
+
+    /// Build the full Cartesian product: for each sweep point, a list of
+    /// (sub_idx, param_idx, value).
+    pub fn cartesian_product(&self) -> Vec<Vec<(usize, usize, f32)>> {
+        let mut result = Vec::new();
+        let mut indices = vec![0usize; self.points.len()];
+        let total: usize = self.points.iter().map(|p| p.values.len()).product();
+
+        for _ in 0..total {
+            let mut point = Vec::new();
+            for (i, p) in self.points.iter().enumerate() {
+                point.push((p.sub_idx, p.param_idx, p.values[indices[i]]));
+            }
+            result.push(point);
+
+            for i in (0..self.points.len()).rev() {
+                indices[i] += 1;
+                if indices[i] < self.points[i].values.len() {
+                    break;
+                }
+                indices[i] = 0;
+            }
+        }
+        result
+    }
 }
 
 /// A batch-dim hybrid simulation engine that processes all sweep points in parallel.
@@ -712,6 +763,494 @@ impl<B: Backend> BatchHybridEngine<B> {
 
         BatchSweepResult {
             param_values: param_values.to_vec(),
+            tavg: tavg_results,
+            final_states: final_state_results,
+            trajectories,
+            bold: bold_data,
+            elapsed_ms: elapsed.as_millis() as f64,
+            n_sweep,
+        }
+    }
+
+    /// Run a multi-parameter sweep using a SweepSpec (Cartesian product of parameters).
+    pub fn run_sweep_multi(
+        &mut self,
+        spec: &SweepSpec,
+        n_steps: usize,
+    ) -> BatchSweepResult {
+        self.run_sweep_multi_internal(spec, n_steps, false)
+    }
+
+    /// Run a multi-parameter sweep with trajectory recording.
+    pub fn run_sweep_multi_with_trajectory(
+        &mut self,
+        spec: &SweepSpec,
+        n_steps: usize,
+    ) -> BatchSweepResult {
+        self.run_sweep_multi_internal(spec, n_steps, true)
+    }
+
+    fn run_sweep_multi_internal(
+        &mut self,
+        spec: &SweepSpec,
+        n_steps: usize,
+        record_trajectory: bool,
+    ) -> BatchSweepResult {
+        let start = Instant::now();
+        let n_sweep = spec.n_sweep();
+        if n_sweep == 0 {
+            return BatchSweepResult {
+                param_values: vec![],
+                tavg: vec![],
+                final_states: vec![],
+                trajectories: None,
+                bold: None,
+                elapsed_ms: 0.0,
+                n_sweep: 0,
+            };
+        }
+        if n_sweep > 10000 {
+            log::warn!("Multi-param sweep with {} points may be slow", n_sweep);
+        }
+
+        let cartesian = spec.cartesian_product();
+
+        // Re-create engine with n_sweep copies
+        let mut new_config = self.network.clone();
+        // Patch initial states from current states (flatten from batch layout)
+        for (i, sub) in new_config.subnetworks.iter_mut().enumerate() {
+            let state_shape = self.states[i].shape();
+            let nnodes_modes = state_shape.dims[1];
+            let _nvar = state_shape.dims[2];
+            let (flat, _) = crate::io::tensor_to_flat_f32::<B, 2>(self.states[i].clone().narrow(0, 0, 1).squeeze::<2>(0));
+            sub.initial_state = crate::config::InitialStateConfig::Inline(flat);
+            sub.nnodes = nnodes_modes / sub.nmodes;
+        }
+        let config = SimConfig {
+            sim_length: n_steps as f64 * self.dt as f64,
+            dt: self.dt as f64,
+            network: new_config,
+            integrator: self.integrator,
+            monitors: vec![],
+            stimuli: vec![],
+            nsig: crate::config::NsigConfig::Scalar(0.0),
+            speed: 3.0,
+            backend: "ndarray".to_string(),
+        };
+        let mut engine = BatchHybridEngine::<B>::from_config(config, n_sweep, self.device.clone())
+            .expect("from_config should succeed");
+        engine.hybrid_integrator = self.hybrid_integrator;
+        engine.nsig_vec = self.nsig_vec.clone();
+
+        // Build per-sweep-point params: for each subnetwork, a [n_sweep, n_params] matrix
+        // where row i has default params with swept values overridden for that Cartesian point.
+        let all_params: Vec<Vec<f32>> = engine.models.iter().map(|m| model_param_slice(m)).collect();
+        let n_subs = engine.models.len();
+
+        // Group sweep points by subnetwork: for each sub, a list of (param_idx, values_tensor)
+        // where values_tensor has shape [n_sweep, 1, 1] with values expanded per Cartesian product.
+        let mut sweep_by_sub: Vec<Vec<(usize, Tensor<B, 3>)>> = vec![Vec::new(); n_subs];
+        for (dim_idx, point) in spec.points.iter().enumerate() {
+            // Compute the stride for this dimension in the Cartesian product.
+            // The last dimension varies fastest (stride=1), first varies slowest.
+            let stride: usize = spec.points[dim_idx + 1..]
+                .iter()
+                .map(|p| p.values.len())
+                .product::<usize>()
+                .max(1);
+            let block_size = point.values.len() * stride;
+            let n_blocks = n_sweep / block_size;
+
+            let mut expanded = Vec::with_capacity(n_sweep);
+            for _block in 0..n_blocks {
+                for &val in &point.values {
+                    for _s in 0..stride {
+                        expanded.push(val);
+                    }
+                }
+            }
+            debug_assert_eq!(expanded.len(), n_sweep);
+
+            let values_tensor = Tensor::<B, 3>::from_floats(
+                TensorData::new::<f32, Vec<usize>>(expanded, vec![n_sweep, 1, 1]),
+                &engine.device,
+            );
+            sweep_by_sub[point.sub_idx].push((point.param_idx, values_tensor));
+        }
+
+        // Initialize temporal average accumulators
+        let mut tavg: Vec<Tensor<B, 3>> = engine.states.iter().map(|s| {
+            let shape = s.shape();
+            Tensor::<B, 3>::zeros([shape.dims[0], shape.dims[1], shape.dims[2]], &engine.device)
+        }).collect();
+
+        let inv_nsteps = 1.0f32 / n_steps as f32;
+
+        // Optional trajectory recording
+        let mut trajectories_per_sub: Vec<Vec<f32>> = if record_trajectory {
+            engine.models.iter().map(|_| Vec::new()).collect()
+        } else {
+            vec![]
+        };
+
+        // Pre-allocate coupling zero tensors
+        let zero_couplings: Vec<Tensor<B, 3>> = engine.states.iter().enumerate().map(|(i, s)| {
+            let shape = s.shape();
+            let ncvar = engine.models[i].ncvar();
+            Tensor::<B, 3>::zeros([shape.dims[0], shape.dims[1], ncvar], &engine.device)
+        }).collect();
+
+        let projections = &engine.precomputed_projections;
+
+        for _t in 0..n_steps {
+            // Save states into history buffers
+            for i in 0..engine.models.len() {
+                if let Some(h) = engine.histories.get(i) {
+                    let state_slice = engine.states[i].clone().unsqueeze_dim::<4>(3);
+                    let new_h = Tensor::cat(vec![h.clone(), state_slice], 3);
+                    let horizon = h.shape().dims[3];
+                    let new_len = new_h.shape().dims[3] - horizon;
+                    let new_h = new_h.narrow(3, new_len, horizon);
+                    engine.histories[i] = new_h;
+                }
+            }
+
+            // Compute coupling
+            let mut couplings: Vec<Option<Tensor<B, 3>>> = vec![None; engine.models.len()];
+            let mut cvar_cache: std::collections::HashMap<(usize, u32), Tensor<B, 3>> = Default::default();
+
+            for proj in projections {
+                let src_idx = proj.src;
+                let tgt_idx = proj.tgt;
+                let src_model = &engine.models[src_idx];
+                let src_state = &engine.states[src_idx];
+                let ncvar = src_model.ncvar();
+
+                let key = (src_idx, proj.delay);
+                let cvar_state = match cvar_cache.get(&key) {
+                    Some(cached) => cached.clone(),
+                    None => {
+                        let cvar = if proj.delay == 0 || engine.step == 0 {
+                            src_state.clone().narrow(2, 0, ncvar.min(src_model.nvar()))
+                        } else {
+                            let raw_delay = proj.delay as usize;
+                            if raw_delay <= engine.step {
+                                let h = &engine.histories[src_idx];
+                                let horizon = h.shape().dims[3];
+                                let slot = (engine.step - raw_delay + horizon) % horizon;
+                                let delayed = h.clone().narrow(3, slot, 1).squeeze::<3>(3);
+                                delayed.narrow(2, 0, ncvar.min(src_model.nvar()))
+                            } else {
+                                Tensor::<B, 3>::zeros(
+                                    [n_sweep, src_state.shape().dims[1], ncvar.min(src_model.nvar())],
+                                    &engine.device,
+                                )
+                            }
+                        };
+                        cvar_cache.insert(key, cvar.clone());
+                        cvar
+                    }
+                };
+
+                let coupled = match &proj.weight_kind {
+                    ProjectionWeightKind::Scalar { weight } => {
+                        let mean = cvar_state.mean_dim(1);
+                        mean.mul_scalar(*weight)
+                            .expand([n_sweep, src_state.shape().dims[1], ncvar.min(src_model.nvar())])
+                    }
+                    ProjectionWeightKind::Dense { weights } => {
+                        let src_nnodes = weights.shape().dims[0];
+                        let cvar_t = cvar_state.swap_dims(1, 2);
+                        let weights_3d = weights
+                            .clone()
+                            .unsqueeze_dim::<3>(0)
+                            .expand([n_sweep, src_nnodes, weights.shape().dims[1]]);
+                        let result = cvar_t.matmul(weights_3d);
+                        result.swap_dims(1, 2)
+                    }
+                    ProjectionWeightKind::Csr { weights } => {
+                        let src_nnodes = weights.shape().dims[0];
+                        let cvar_t = cvar_state.swap_dims(1, 2);
+                        let weights_3d = weights
+                            .clone()
+                            .unsqueeze_dim::<3>(0)
+                            .expand([n_sweep, src_nnodes, weights.shape().dims[1]]);
+                        let result = cvar_t.matmul(weights_3d);
+                        result.swap_dims(1, 2)
+                    }
+                };
+
+                let tgt_model = &engine.models[tgt_idx];
+                let tgt_ncvar = tgt_model.ncvar();
+                let remapped = if tgt_ncvar == ncvar
+                    && proj.cvar_map.len() == 1
+                    && proj.cvar_map[0] == (0, 0)
+                {
+                    coupled
+                } else {
+                    let src_ncvar = ncvar;
+                    let n_batch = coupled.shape().dims[0];
+                    let n_nodes = coupled.shape().dims[1];
+                    let mut tgt_data = vec![0.0f32; n_batch * n_nodes * tgt_ncvar];
+                    let src_data = crate::io::tensor_to_flat_f32(coupled.clone()).0;
+                    for &(s, t) in &proj.cvar_map {
+                        if s < src_ncvar && t < tgt_ncvar {
+                            for b in 0..n_batch {
+                                for n in 0..n_nodes {
+                                    tgt_data[(b * n_nodes + n) * tgt_ncvar + t] +=
+                                        src_data[(b * n_nodes + n) * src_ncvar + s];
+                                }
+                            }
+                        }
+                    }
+                    Tensor::<B, 3>::from_floats(
+                        TensorData::new::<f32, Vec<usize>>(tgt_data, vec![n_batch, n_nodes, tgt_ncvar]),
+                        &engine.device,
+                    )
+                };
+
+                match &mut couplings[tgt_idx] {
+                    Some(existing) => {
+                        *existing = existing.clone() + remapped;
+                    }
+                    None => {
+                        couplings[tgt_idx] = Some(remapped);
+                    }
+                }
+            }
+
+            // Integrate each subnetwork with multi-param sweep
+            for i in 0..engine.models.len() {
+                let model = &engine.models[i];
+
+                let coupling = match &couplings[i] {
+                    Some(c) => c.clone(),
+                    None => zero_couplings[i].clone(),
+                };
+
+                let params = &all_params[i];
+
+                if sweep_by_sub[i].is_empty() {
+                    // No swept params for this subnetwork — use old single-param path
+                    let deriv = dfun_batch(model, engine.states[i].clone(), coupling.clone(), params, None);
+
+                    let use_heun = if engine.hybrid_integrator {
+                        model_prefers_heun(model)
+                    } else {
+                        matches!(engine.integrator, IntegratorKind::Heun)
+                    };
+
+                    if use_heun {
+                        let mut predictor = engine.states[i].clone() + deriv.clone().mul_scalar(engine.dt);
+                        clamp_batch(model, &mut predictor);
+                        let deriv2 = dfun_batch(model, predictor, coupling, params, None);
+                        engine.states[i] = engine.states[i].clone() + (deriv + deriv2).mul_scalar(engine.dt * 0.5);
+                    } else {
+                        match engine.integrator {
+                            IntegratorKind::Euler => {
+                                engine.states[i] = engine.states[i].clone() + deriv.mul_scalar(engine.dt);
+                            }
+                            IntegratorKind::Rk4 => {
+                                let k1 = deriv;
+                                let mut k2_state = engine.states[i].clone() + k1.clone().mul_scalar(engine.dt / 2.0);
+                                clamp_batch(model, &mut k2_state);
+                                let k2 = dfun_batch(model, k2_state, coupling.clone(), params, None);
+                                let mut k3_state = engine.states[i].clone() + k2.clone().mul_scalar(engine.dt / 2.0);
+                                clamp_batch(model, &mut k3_state);
+                                let k3 = dfun_batch(model, k3_state, coupling.clone(), params, None);
+                                let mut k4_state = engine.states[i].clone() + k3.clone().mul_scalar(engine.dt);
+                                clamp_batch(model, &mut k4_state);
+                                let k4 = dfun_batch(model, k4_state, coupling, params, None);
+                                engine.states[i] = engine.states[i].clone() + (k1 + k2.mul_scalar(2.0) + k3.mul_scalar(2.0) + k4).mul_scalar(engine.dt / 6.0);
+                            }
+                            IntegratorKind::EulerStochastic => {
+                                let dims = engine.states[i].shape().dims;
+                                let noise = crate::engine::integrator::generate_noise_per_var::<B>(
+                                    [dims[1], dims[2]], &engine.nsig_vec, engine.dt, &engine.device,
+                                );
+                                let noise_3d = noise.unsqueeze_dim::<3>(0).expand([dims[0], dims[1], dims[2]]);
+                                engine.states[i] = engine.states[i].clone() + deriv.mul_scalar(engine.dt) + noise_3d;
+                            }
+                            IntegratorKind::HeunStochastic => {
+                                let dims = engine.states[i].shape().dims;
+                                let noise = crate::engine::integrator::generate_noise_per_var::<B>(
+                                    [dims[1], dims[2]], &engine.nsig_vec, engine.dt, &engine.device,
+                                );
+                                let noise_3d = noise.unsqueeze_dim::<3>(0).expand([dims[0], dims[1], dims[2]]);
+                                let mut predictor = engine.states[i].clone() + deriv.clone().mul_scalar(engine.dt) + noise_3d.clone();
+                                clamp_batch(model, &mut predictor);
+                                let deriv2 = dfun_batch(model, predictor, coupling, params, None);
+                                engine.states[i] = engine.states[i].clone() + (deriv + deriv2).mul_scalar(engine.dt * 0.5) + noise_3d;
+                            }
+                            IntegratorKind::Rk4Stochastic => {
+                                let dims = engine.states[i].shape().dims;
+                                let k1 = deriv;
+                                let mut k2_state = engine.states[i].clone() + k1.clone().mul_scalar(engine.dt / 2.0);
+                                clamp_batch(model, &mut k2_state);
+                                let k2 = dfun_batch(model, k2_state, coupling.clone(), params, None);
+                                let mut k3_state = engine.states[i].clone() + k2.clone().mul_scalar(engine.dt / 2.0);
+                                clamp_batch(model, &mut k3_state);
+                                let k3 = dfun_batch(model, k3_state, coupling.clone(), params, None);
+                                let mut k4_state = engine.states[i].clone() + k3.clone().mul_scalar(engine.dt);
+                                clamp_batch(model, &mut k4_state);
+                                let k4 = dfun_batch(model, k4_state, coupling, params, None);
+                                let deterministic = engine.states[i].clone() + (k1 + k2.mul_scalar(2.0) + k3.mul_scalar(2.0) + k4).mul_scalar(engine.dt / 6.0);
+                                let noise = crate::engine::integrator::generate_noise_per_var::<B>(
+                                    [dims[1], dims[2]], &engine.nsig_vec, engine.dt, &engine.device,
+                                );
+                                let noise_3d = noise.unsqueeze_dim::<3>(0).expand([dims[0], dims[1], dims[2]]);
+                                engine.states[i] = deterministic + noise_3d;
+                            }
+                            _ => {
+                                engine.states[i] = engine.states[i].clone() + deriv.mul_scalar(engine.dt);
+                            }
+                        }
+                    }
+                } else {
+                    // Multi-param sweep for this subnetwork
+                    let deriv = dfun_batch_multi(model, engine.states[i].clone(), coupling.clone(), params, &sweep_by_sub[i]);
+
+                    let use_heun = if engine.hybrid_integrator {
+                        model_prefers_heun(model)
+                    } else {
+                        matches!(engine.integrator, IntegratorKind::Heun)
+                    };
+
+                    if use_heun {
+                        let mut predictor = engine.states[i].clone() + deriv.clone().mul_scalar(engine.dt);
+                        clamp_batch(model, &mut predictor);
+                        let deriv2 = dfun_batch_multi(model, predictor, coupling, params, &sweep_by_sub[i]);
+                        engine.states[i] = engine.states[i].clone() + (deriv + deriv2).mul_scalar(engine.dt * 0.5);
+                    } else {
+                        match engine.integrator {
+                            IntegratorKind::Euler => {
+                                engine.states[i] = engine.states[i].clone() + deriv.mul_scalar(engine.dt);
+                            }
+                            IntegratorKind::Rk4 => {
+                                let k1 = deriv;
+                                let mut k2_state = engine.states[i].clone() + k1.clone().mul_scalar(engine.dt / 2.0);
+                                clamp_batch(model, &mut k2_state);
+                                let k2 = dfun_batch_multi(model, k2_state, coupling.clone(), params, &sweep_by_sub[i]);
+                                let mut k3_state = engine.states[i].clone() + k2.clone().mul_scalar(engine.dt / 2.0);
+                                clamp_batch(model, &mut k3_state);
+                                let k3 = dfun_batch_multi(model, k3_state, coupling.clone(), params, &sweep_by_sub[i]);
+                                let mut k4_state = engine.states[i].clone() + k3.clone().mul_scalar(engine.dt);
+                                clamp_batch(model, &mut k4_state);
+                                let k4 = dfun_batch_multi(model, k4_state, coupling, params, &sweep_by_sub[i]);
+                                engine.states[i] = engine.states[i].clone() + (k1 + k2.mul_scalar(2.0) + k3.mul_scalar(2.0) + k4).mul_scalar(engine.dt / 6.0);
+                            }
+                            IntegratorKind::EulerStochastic => {
+                                let dims = engine.states[i].shape().dims;
+                                let noise = crate::engine::integrator::generate_noise_per_var::<B>(
+                                    [dims[1], dims[2]], &engine.nsig_vec, engine.dt, &engine.device,
+                                );
+                                let noise_3d = noise.unsqueeze_dim::<3>(0).expand([dims[0], dims[1], dims[2]]);
+                                engine.states[i] = engine.states[i].clone() + deriv.mul_scalar(engine.dt) + noise_3d;
+                            }
+                            IntegratorKind::HeunStochastic => {
+                                let dims = engine.states[i].shape().dims;
+                                let noise = crate::engine::integrator::generate_noise_per_var::<B>(
+                                    [dims[1], dims[2]], &engine.nsig_vec, engine.dt, &engine.device,
+                                );
+                                let noise_3d = noise.unsqueeze_dim::<3>(0).expand([dims[0], dims[1], dims[2]]);
+                                let mut predictor = engine.states[i].clone() + deriv.clone().mul_scalar(engine.dt) + noise_3d.clone();
+                                clamp_batch(model, &mut predictor);
+                                let deriv2 = dfun_batch_multi(model, predictor, coupling, params, &sweep_by_sub[i]);
+                                engine.states[i] = engine.states[i].clone() + (deriv + deriv2).mul_scalar(engine.dt * 0.5) + noise_3d;
+                            }
+                            IntegratorKind::Rk4Stochastic => {
+                                let dims = engine.states[i].shape().dims;
+                                let k1 = deriv;
+                                let mut k2_state = engine.states[i].clone() + k1.clone().mul_scalar(engine.dt / 2.0);
+                                clamp_batch(model, &mut k2_state);
+                                let k2 = dfun_batch_multi(model, k2_state, coupling.clone(), params, &sweep_by_sub[i]);
+                                let mut k3_state = engine.states[i].clone() + k2.clone().mul_scalar(engine.dt / 2.0);
+                                clamp_batch(model, &mut k3_state);
+                                let k3 = dfun_batch_multi(model, k3_state, coupling.clone(), params, &sweep_by_sub[i]);
+                                let mut k4_state = engine.states[i].clone() + k3.clone().mul_scalar(engine.dt);
+                                clamp_batch(model, &mut k4_state);
+                                let k4 = dfun_batch_multi(model, k4_state, coupling, params, &sweep_by_sub[i]);
+                                let deterministic = engine.states[i].clone() + (k1 + k2.mul_scalar(2.0) + k3.mul_scalar(2.0) + k4).mul_scalar(engine.dt / 6.0);
+                                let noise = crate::engine::integrator::generate_noise_per_var::<B>(
+                                    [dims[1], dims[2]], &engine.nsig_vec, engine.dt, &engine.device,
+                                );
+                                let noise_3d = noise.unsqueeze_dim::<3>(0).expand([dims[0], dims[1], dims[2]]);
+                                engine.states[i] = deterministic + noise_3d;
+                            }
+                            _ => {
+                                engine.states[i] = engine.states[i].clone() + deriv.mul_scalar(engine.dt);
+                            }
+                        }
+                    }
+                }
+
+                clamp_batch(model, &mut engine.states[i]);
+                tavg[i] = tavg[i].clone() + engine.states[i].clone();
+
+                if record_trajectory && i < trajectories_per_sub.len() {
+                    let (flat, _) = crate::io::tensor_to_flat_f32::<B, 3>(engine.states[i].clone());
+                    trajectories_per_sub[i].extend_from_slice(&flat);
+                }
+            }
+
+            // Accumulate BOLD
+            for (mi, monitor) in engine.bold_monitors.iter_mut().enumerate() {
+                let target = engine.bold_targets[mi];
+                let state = &engine.states[target];
+                let nnodes = engine.network.subnetworks[target].nnodes;
+                let nmodes = engine.network.subnetworks[target].nmodes;
+                let var0 = state.clone().narrow(2, 0, 1)
+                    .reshape([n_sweep, nnodes, nmodes])
+                    .mean_dim(2)
+                    .squeeze::<2>(2)
+                    .mean_dim(0)
+                    .squeeze::<1>(0);
+                let (flat, _shape) = crate::io::tensor_to_flat_f32::<B, 1>(var0);
+                monitor.accumulate(&flat);
+            }
+
+            engine.step += 1;
+        }
+
+        let bold_data: Option<Vec<Vec<f32>>> = if engine.bold_monitors.is_empty() {
+            None
+        } else {
+            Some(engine.bold_monitors.iter_mut().map(|m| m.flush()).collect())
+        };
+
+        let mut tavg_results = Vec::new();
+        let mut final_state_results = Vec::new();
+
+        for (i, tavg_i) in tavg.iter().enumerate().take(engine.models.len()) {
+            let avg = tavg_i.clone().mul_scalar(inv_nsteps);
+            let (tavg_data, _) = crate::io::tensor_to_flat_f32::<B, 3>(avg);
+            let (state_data, _) = crate::io::tensor_to_flat_f32::<B, 3>(engine.states[i].clone());
+            tavg_results.push(tavg_data);
+            final_state_results.push(state_data);
+        }
+
+        let elapsed = start.elapsed();
+
+        // Collect param values — for multi-param this is the sequence of Cartesian points
+        let param_values: Vec<f32> = cartesian.iter()
+            .flat_map(|point| point.iter().map(|&(_, _, v)| v))
+            .collect();
+
+        // Update self from engine (to preserve state for the caller)
+        // Actually for multi-sweep we operate on a local engine, so copy results back
+        self.states = engine.states;
+        self.step = engine.step;
+        self.histories = engine.histories;
+        self.bold_monitors = engine.bold_monitors;
+
+        let trajectories = if record_trajectory {
+            Some(trajectories_per_sub)
+        } else {
+            None
+        };
+
+        BatchSweepResult {
+            param_values,
             tavg: tavg_results,
             final_states: final_state_results,
             trajectories,
@@ -2245,6 +2784,167 @@ mod tests {
             for (i, (s, r)) in single_tavg.iter().zip(rayon_tavg.iter()).enumerate() {
                 assert!(
 (s - r).abs() < 1e-4, "Rayon mismatch at sub {} idx {}: single={} rayon={}", sub_idx, i, s, r);
+            }
+        }
+    }
+
+    #[test]
+    fn test_sweep_spec_n_sweep() {
+        let spec = SweepSpec {
+            points: vec![
+                SweepPoint { sub_idx: 0, param_idx: 1, values: vec![0.1, 0.2, 0.3] },
+                SweepPoint { sub_idx: 0, param_idx: 2, values: vec![-1.0, 1.0] },
+            ],
+        };
+        assert_eq!(spec.n_sweep(), 6);
+    }
+
+    #[test]
+    fn test_sweep_spec_cartesian_product() {
+        let spec = SweepSpec {
+            points: vec![
+                SweepPoint { sub_idx: 0, param_idx: 1, values: vec![1.0, 2.0] },
+                SweepPoint { sub_idx: 0, param_idx: 2, values: vec![10.0, 20.0, 30.0] },
+            ],
+        };
+        let product = spec.cartesian_product();
+        assert_eq!(product.len(), 6);
+        assert_eq!(product[0], vec![(0, 1, 1.0), (0, 2, 10.0)]);
+        assert_eq!(product[1], vec![(0, 1, 1.0), (0, 2, 20.0)]);
+        assert_eq!(product[2], vec![(0, 1, 1.0), (0, 2, 30.0)]);
+        assert_eq!(product[3], vec![(0, 1, 2.0), (0, 2, 10.0)]);
+        assert_eq!(product[4], vec![(0, 1, 2.0), (0, 2, 20.0)]);
+        assert_eq!(product[5], vec![(0, 1, 2.0), (0, 2, 30.0)]);
+    }
+
+    #[test]
+    fn test_sweep_spec_single_param_cartesian() {
+        let spec = SweepSpec {
+            points: vec![
+                SweepPoint { sub_idx: 0, param_idx: 1, values: vec![0.0, 0.5, 1.0] },
+            ],
+        };
+        assert_eq!(spec.n_sweep(), 3);
+        let product = spec.cartesian_product();
+        assert_eq!(product.len(), 3);
+        assert_eq!(product[0], vec![(0, 1, 0.0)]);
+        assert_eq!(product[1], vec![(0, 1, 0.5)]);
+        assert_eq!(product[2], vec![(0, 1, 1.0)]);
+    }
+
+    #[test]
+    fn test_run_sweep_multi_g2do_two_params() {
+        let device: <B as Backend>::Device = Default::default();
+        let config = SimConfig {
+            sim_length: 50.0,
+            dt: 0.1,
+            network: NetworkConfig {
+                subnetworks: vec![crate::config::SubnetworkConfig {
+                    model: "Generic2dOscillator".to_string(),
+                    nnodes: 2,
+                    nmodes: 1,
+                    initial_state: InitialStateConfig::Inline(vec![0.1, 0.1, 0.1, 0.1]),
+                    params: crate::model::g2do::g2do_default_params(),
+                }],
+                projections: vec![],
+            },
+            integrator: IntegratorKind::Euler,
+            monitors: vec![],
+            stimuli: vec![],
+            nsig: crate::config::NsigConfig::Scalar(0.0),
+            speed: 3.0,
+            backend: "ndarray".to_string(),
+        };
+
+        let spec = SweepSpec {
+            points: vec![
+                SweepPoint { sub_idx: 0, param_idx: 1, values: vec![-1.0f32, 0.0, 1.0] },
+                SweepPoint { sub_idx: 0, param_idx: 9, values: vec![0.5f32, 2.0] },
+            ],
+        };
+        let n_sweep = spec.n_sweep();
+        assert_eq!(n_sweep, 6);
+
+        let mut engine = BatchHybridEngine::<B>::from_config(config, n_sweep, device).unwrap();
+        let result = engine.run_sweep_multi(&spec, 50);
+
+        assert_eq!(result.n_sweep, 6);
+        assert!(result.tavg[0].iter().all(|x| x.is_finite()));
+        assert!(result.final_states[0].iter().all(|x| x.is_finite()));
+
+        let nvar = 2;
+        let nnodes = 2;
+        let per_point = nnodes * nvar;
+        let all_different = (0..n_sweep - 1).all(|i| {
+            let pt_i = &result.tavg[0][i * per_point..(i + 1) * per_point];
+            let pt_j = &result.tavg[0][(i + 1) * per_point..(i + 2) * per_point];
+            let diff: f32 = pt_i.iter().zip(pt_j.iter()).map(|(a, b)| (a - b).abs()).sum();
+            diff > 1e-8
+        });
+        assert!(all_different, "All Cartesian product points should produce different tavg");
+    }
+
+    #[test]
+    fn test_run_sweep_multi_matches_single_sweep() {
+        let device: <B as Backend>::Device = Default::default();
+
+        let make_config = |i_ext: f32| {
+            let mut params = crate::model::g2do::g2do_default_params();
+            params[1] = i_ext;
+            SimConfig {
+                sim_length: 50.0,
+                dt: 0.1,
+                network: NetworkConfig {
+                    subnetworks: vec![crate::config::SubnetworkConfig {
+                        model: "Generic2dOscillator".to_string(),
+                        nnodes: 2,
+                        nmodes: 1,
+                        initial_state: InitialStateConfig::Inline(vec![0.1f32, 0.1, 0.1, 0.1]),
+                        params,
+                    }],
+                    projections: vec![],
+                },
+                integrator: IntegratorKind::Euler,
+                monitors: vec![],
+                stimuli: vec![],
+                nsig: crate::config::NsigConfig::Scalar(0.0),
+                speed: 3.0,
+                backend: "ndarray".to_string(),
+            }
+        };
+
+        let i_ext_values = vec![-0.5f32, 0.0, 0.5];
+
+        // Single-param sweep (old API)
+        let mut engine_single = BatchHybridEngine::<B>::from_config(make_config(0.0), 3, device.clone()).unwrap();
+        let result_single = engine_single.run_sweep(
+            &SweepParam { sub_idx: 0, param_idx: 1 },
+            &i_ext_values,
+            50,
+        );
+
+        // Multi-param sweep with single parameter
+        let spec = SweepSpec {
+            points: vec![
+                SweepPoint { sub_idx: 0, param_idx: 1, values: i_ext_values.clone() },
+            ],
+        };
+        let mut engine_multi = BatchHybridEngine::<B>::from_config(make_config(0.0), spec.n_sweep(), device).unwrap();
+        let result_multi = engine_multi.run_sweep_multi(&spec, 50);
+
+        assert_eq!(result_single.n_sweep, result_multi.n_sweep);
+        let nvar = 2;
+        let nnodes = 2;
+        let per_point = nnodes * nvar;
+        for pt in 0..3 {
+            let single_pt = &result_single.tavg[0][pt * per_point..(pt + 1) * per_point];
+            let multi_pt = &result_multi.tavg[0][pt * per_point..(pt + 1) * per_point];
+            for (i, (s, m)) in single_pt.iter().zip(multi_pt.iter()).enumerate() {
+                assert!(
+                    (s - m).abs() < 1e-4,
+                    "Single vs multi mismatch at pt {} idx {}: single={} multi={}",
+                    pt, i, s, m
+                );
             }
         }
     }

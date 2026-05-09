@@ -16,6 +16,35 @@ pub fn dfun_batch<B: Backend>(
     params: &[f32],
     sweep_param: Option<(usize, &Tensor<B, 3>)>,
 ) -> Tensor<B, 3> {
+    dfun_batch_dispatch(model, state, coupling, params, sweep_param, &[])
+}
+
+pub fn dfun_batch_multi<B: Backend>(
+    model: &EngineModel<B>,
+    state: Tensor<B, 3>,
+    coupling: Tensor<B, 3>,
+    params: &[f32],
+    sweep_params: &[(usize, Tensor<B, 3>)],
+) -> Tensor<B, 3> {
+    dfun_batch_dispatch(model, state, coupling, params, None, sweep_params)
+}
+
+fn dfun_batch_dispatch<B: Backend>(
+    model: &EngineModel<B>,
+    state: Tensor<B, 3>,
+    coupling: Tensor<B, 3>,
+    params: &[f32],
+    sweep_param: Option<(usize, &Tensor<B, 3>)>,
+    sweep_params: &[(usize, Tensor<B, 3>)],
+) -> Tensor<B, 3> {
+    if !sweep_params.is_empty() {
+        if sweep_params.len() == 1 {
+            let (ref pidx, ref tensor) = sweep_params[0];
+            return dfun_batch_dispatch(model, state, coupling, params, Some((*pidx, tensor)), &[]);
+        }
+        return dfun_batch_multi_fallback(model, state, coupling, params, sweep_params);
+    }
+
     match model {
         EngineModel::G2do { .. } => {
             let sweep = match sweep_param { Some((1, t)) => Some(t), _ => None };
@@ -64,6 +93,76 @@ pub fn dfun_batch<B: Backend>(
         EngineModel::ZerlautSecond { .. } => zerlaut_second_dfun_batch::<B>(state, coupling, params, None),
         EngineModel::KIonEx { .. } => kionex_dfun_batch::<B>(state, coupling, params, None),
         _ => dfun_batch_fallback::<B>(model, state, coupling, params, sweep_param),
+    }
+}
+
+fn dfun_batch_multi_fallback<B: Backend>(
+    model: &EngineModel<B>,
+    state: Tensor<B, 3>,
+    coupling: Tensor<B, 3>,
+    params: &[f32],
+    sweep_params: &[(usize, Tensor<B, 3>)],
+) -> Tensor<B, 3> {
+    let n_sweep = state.shape().dims[0];
+    log::warn!("dfun_batch_multi_fallback: using slow per-point iteration over {} sweep points with {} swept params", n_sweep, sweep_params.len());
+
+    let overrides: Vec<Vec<(usize, f32)>> = (0..n_sweep).map(|s| {
+        sweep_params.iter().map(|(pidx, tensor)| {
+            let val_tensor = tensor.clone().narrow(0, s, 1).squeeze::<2>(0).squeeze::<1>(0);
+            let (data, _) = crate::io::tensor_to_flat_f32::<B, 1>(val_tensor);
+            (*pidx, data[0])
+        }).collect()
+    }).collect();
+
+    let mut result = Vec::with_capacity(n_sweep);
+    for (s, s_overrides) in overrides.iter().enumerate() {
+        let s_state = state.clone().narrow(0, s, 1).squeeze::<2>(0);
+        let s_coupling = coupling.clone().narrow(0, s, 1).squeeze::<2>(0);
+        let mut modified_params = params.to_vec();
+        for (pidx, val) in s_overrides {
+            if *pidx < modified_params.len() {
+                modified_params[*pidx] = *val;
+            }
+        }
+        let mut temp_model = model.clone();
+        set_model_params(&mut temp_model, &modified_params);
+        let s_deriv = temp_model.dfun(s_state, s_coupling);
+        result.push(s_deriv.unsqueeze_dim::<3>(0));
+    }
+    Tensor::cat(result, 0)
+}
+
+fn set_model_params<B: Backend>(model: &mut EngineModel<B>, params: &[f32]) {
+    match model {
+        EngineModel::G2do { params: p } => { p.copy_from_slice(params); }
+        EngineModel::Mpr { params: p } => { p.copy_from_slice(params); }
+        EngineModel::Rww { params: p } => { p.copy_from_slice(params); }
+        EngineModel::Kuramoto { params: p } => { p.copy_from_slice(params); }
+        EngineModel::JansenRit { params: p } => { p.copy_from_slice(params); }
+        EngineModel::WilsonCowan { params: p } => { p.copy_from_slice(params); }
+        EngineModel::Linear { params: p } => { p.copy_from_slice(params); }
+        EngineModel::SupHopf { params: p } => { p.copy_from_slice(params); }
+        EngineModel::Hopfield { params: p } => { p.copy_from_slice(params); }
+        EngineModel::CoombesByrne2D { params: p } => { p.copy_from_slice(params); }
+        EngineModel::CoombesByrne { params: p } => { p.copy_from_slice(params); }
+        EngineModel::GastSD { params: p } => { p.copy_from_slice(params); }
+        EngineModel::GastSF { params: p } => { p.copy_from_slice(params); }
+        EngineModel::LarterBreakspear { params: p } => { p.copy_from_slice(params); }
+        EngineModel::Epileptor2D { params: p } => { p.copy_from_slice(params); }
+        EngineModel::Epileptor { params: p } => { p.copy_from_slice(params); }
+        EngineModel::RwwExcInh { params: p } => { p.copy_from_slice(params); }
+        EngineModel::DecoBalancedExcInh { params: p } => { p.copy_from_slice(params); }
+        EngineModel::EpileptorCodim3 { params: p } => { p.copy_from_slice(params); }
+        EngineModel::EpileptorCodim3SlowMod { params: p } => { p.copy_from_slice(params); }
+        EngineModel::EpileptorRS { params: p } => { p.copy_from_slice(params); }
+        EngineModel::ZetterbergJansen { params: p } => { p.copy_from_slice(params); }
+        EngineModel::ReducedFHN { params: p } => { p.copy_from_slice(params); }
+        EngineModel::ReducedHR { params: p } => { p.copy_from_slice(params); }
+        EngineModel::DumontGutkin { params: p } => { p.copy_from_slice(params); }
+        EngineModel::ZerlautFirst { params: p } => { p.copy_from_slice(params); }
+        EngineModel::ZerlautSecond { params: p } => { p.copy_from_slice(params); }
+        EngineModel::KIonEx { params: p } => { p.copy_from_slice(params); }
+        _ => {}
     }
 }
 
@@ -145,7 +244,7 @@ fn dfun_batch_fallback<B: Backend>(
     model: &EngineModel<B>,
     state: Tensor<B, 3>,    // [n_sweep, nnodes, nvar]
     coupling: Tensor<B, 3>, // [n_sweep, nnodes, ncvar]
-    _params: &[f32],
+    params: &[f32],
     _sweep_param: Option<(usize, &Tensor<B, 3>)>,
 ) -> Tensor<B, 3> {
     log::warn!("dfun_batch_fallback: using slow sequential iteration over {} sweep points", state.shape().dims[0]);
