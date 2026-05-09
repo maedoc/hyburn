@@ -121,18 +121,6 @@ pub fn generate_noise_per_var<B: Backend>(
     )
 }
 
-/// Generate Gaussian noise tensor with a scalar scale (backward compat).
-#[allow(dead_code)]
-fn generate_noise<B: Backend>(shape: [usize; 2], scale: f32, device: &B::Device) -> Tensor<B, 2> {
-    let n = shape[0] * shape[1];
-    let normal = Normal::new(0.0f64, scale as f64).unwrap();
-    let data: Vec<f32> = (0..n).map(|_| normal.sample(&mut thread_rng()) as f32).collect();
-    Tensor::from_floats(
-        TensorData::new::<f32, Vec<usize>>(data, vec![shape[0], shape[1]]),
-        device,
-    )
-}
-
 /// Stochastic Euler-Maruyama step with per-variable noise.
 ///
 /// `state_new = state + dt * dfun(state, coupling) + Z`

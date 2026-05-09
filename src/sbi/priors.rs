@@ -482,12 +482,24 @@ mod tests {
         use crate::model::linear::Linear;
         use crate::model::sup_hopf::SupHopf;
         use crate::model::hopfield::Hopfield;
-        use crate::model::epileptor::Epileptor;
-        use crate::model::epileptor2d::Epileptor2D;
+        use crate::model::coombes_byrne2d::CoombesByrne2D;
+        use crate::model::coombes_byrne::CoombesByrne;
+        use crate::model::gast_schmidt_knosche_sd::GastSchmidtKnoscheSD;
+        use crate::model::gast_schmidt_knosche_sf::GastSchmidtKnoscheSF;
         use crate::model::larter_breakspear::LarterBreakspear;
+        use crate::model::epileptor2d::Epileptor2D;
+        use crate::model::epileptor::Epileptor;
+        use crate::model::rww_exc_inh::ReducedWongWangExcInh;
+        use crate::model::deco_balanced_exc_inh::DecoBalancedExcInh;
+        use crate::model::epileptor_codim3::EpileptorCodim3;
+        use crate::model::epileptor_codim3_slowmod::EpileptorCodim3SlowMod;
+        use crate::model::epileptor_rs::EpileptorRestingState;
+        use crate::model::zetterberg_jansen::ZetterbergJansen;
         use crate::model::reduced_fhn::ReducedSetFitzHughNagumo;
         use crate::model::reduced_hr::ReducedSetHindmarshRose;
         use crate::model::dumont_gutkin::DumontGutkin;
+        use crate::model::zerlaut_first::ZerlautAdaptationFirstOrder;
+        use crate::model::zerlaut_second::ZerlautAdaptationSecondOrder;
         use crate::model::kionex::KIonEx;
 
         type B = NdArray<f32>;
@@ -510,18 +522,42 @@ mod tests {
                    <SupHopf as NeuralMassModel<B>>::PARAM_NAMES.len());
         assert_eq!(<Hopfield as NeuralMassModel<B>>::PARAM_RANGES.len(),
                    <Hopfield as NeuralMassModel<B>>::PARAM_NAMES.len());
-        assert_eq!(<Epileptor as NeuralMassModel<B>>::PARAM_RANGES.len(),
-                   <Epileptor as NeuralMassModel<B>>::PARAM_NAMES.len());
-        assert_eq!(<Epileptor2D as NeuralMassModel<B>>::PARAM_RANGES.len(),
-                   <Epileptor2D as NeuralMassModel<B>>::PARAM_NAMES.len());
+        assert_eq!(<CoombesByrne2D as NeuralMassModel<B>>::PARAM_RANGES.len(),
+                   <CoombesByrne2D as NeuralMassModel<B>>::PARAM_NAMES.len());
+        assert_eq!(<CoombesByrne as NeuralMassModel<B>>::PARAM_RANGES.len(),
+                   <CoombesByrne as NeuralMassModel<B>>::PARAM_NAMES.len());
+        assert_eq!(<GastSchmidtKnoscheSD as NeuralMassModel<B>>::PARAM_RANGES.len(),
+                   <GastSchmidtKnoscheSD as NeuralMassModel<B>>::PARAM_NAMES.len());
+        assert_eq!(<GastSchmidtKnoscheSF as NeuralMassModel<B>>::PARAM_RANGES.len(),
+                   <GastSchmidtKnoscheSF as NeuralMassModel<B>>::PARAM_NAMES.len());
         assert_eq!(<LarterBreakspear as NeuralMassModel<B>>::PARAM_RANGES.len(),
                    <LarterBreakspear as NeuralMassModel<B>>::PARAM_NAMES.len());
+        assert_eq!(<Epileptor2D as NeuralMassModel<B>>::PARAM_RANGES.len(),
+                   <Epileptor2D as NeuralMassModel<B>>::PARAM_NAMES.len());
+        assert_eq!(<Epileptor as NeuralMassModel<B>>::PARAM_RANGES.len(),
+                   <Epileptor as NeuralMassModel<B>>::PARAM_NAMES.len());
+        assert_eq!(<ReducedWongWangExcInh as NeuralMassModel<B>>::PARAM_RANGES.len(),
+                   <ReducedWongWangExcInh as NeuralMassModel<B>>::PARAM_NAMES.len());
+        assert_eq!(<DecoBalancedExcInh as NeuralMassModel<B>>::PARAM_RANGES.len(),
+                   <DecoBalancedExcInh as NeuralMassModel<B>>::PARAM_NAMES.len());
+        assert_eq!(<EpileptorCodim3 as NeuralMassModel<B>>::PARAM_RANGES.len(),
+                   <EpileptorCodim3 as NeuralMassModel<B>>::PARAM_NAMES.len());
+        assert_eq!(<EpileptorCodim3SlowMod as NeuralMassModel<B>>::PARAM_RANGES.len(),
+                   <EpileptorCodim3SlowMod as NeuralMassModel<B>>::PARAM_NAMES.len());
+        assert_eq!(<EpileptorRestingState as NeuralMassModel<B>>::PARAM_RANGES.len(),
+                   <EpileptorRestingState as NeuralMassModel<B>>::PARAM_NAMES.len());
+        assert_eq!(<ZetterbergJansen as NeuralMassModel<B>>::PARAM_RANGES.len(),
+                   <ZetterbergJansen as NeuralMassModel<B>>::PARAM_NAMES.len());
         assert_eq!(<ReducedSetFitzHughNagumo as NeuralMassModel<B>>::PARAM_RANGES.len(),
                    <ReducedSetFitzHughNagumo as NeuralMassModel<B>>::PARAM_NAMES.len());
         assert_eq!(<ReducedSetHindmarshRose as NeuralMassModel<B>>::PARAM_RANGES.len(),
                    <ReducedSetHindmarshRose as NeuralMassModel<B>>::PARAM_NAMES.len());
         assert_eq!(<DumontGutkin as NeuralMassModel<B>>::PARAM_RANGES.len(),
                    <DumontGutkin as NeuralMassModel<B>>::PARAM_NAMES.len());
+        assert_eq!(<ZerlautAdaptationFirstOrder as NeuralMassModel<B>>::PARAM_RANGES.len(),
+                   <ZerlautAdaptationFirstOrder as NeuralMassModel<B>>::PARAM_NAMES.len());
+        assert_eq!(<ZerlautAdaptationSecondOrder as NeuralMassModel<B>>::PARAM_RANGES.len(),
+                   <ZerlautAdaptationSecondOrder as NeuralMassModel<B>>::PARAM_NAMES.len());
         assert_eq!(<KIonEx as NeuralMassModel<B>>::PARAM_RANGES.len(),
                    <KIonEx as NeuralMassModel<B>>::PARAM_NAMES.len());
     }
@@ -535,6 +571,29 @@ mod tests {
         use crate::model::rww::ReducedWongWang;
         use crate::model::kuramoto_model::Kuramoto;
         use crate::model::jansen_rit::JansenRit;
+        use crate::model::wilson_cowan::WilsonCowan;
+        use crate::model::linear::Linear;
+        use crate::model::sup_hopf::SupHopf;
+        use crate::model::hopfield::Hopfield;
+        use crate::model::coombes_byrne2d::CoombesByrne2D;
+        use crate::model::coombes_byrne::CoombesByrne;
+        use crate::model::gast_schmidt_knosche_sd::GastSchmidtKnoscheSD;
+        use crate::model::gast_schmidt_knosche_sf::GastSchmidtKnoscheSF;
+        use crate::model::larter_breakspear::LarterBreakspear;
+        use crate::model::epileptor2d::Epileptor2D;
+        use crate::model::epileptor::Epileptor;
+        use crate::model::rww_exc_inh::ReducedWongWangExcInh;
+        use crate::model::deco_balanced_exc_inh::DecoBalancedExcInh;
+        use crate::model::epileptor_codim3::EpileptorCodim3;
+        use crate::model::epileptor_codim3_slowmod::EpileptorCodim3SlowMod;
+        use crate::model::epileptor_rs::EpileptorRestingState;
+        use crate::model::zetterberg_jansen::ZetterbergJansen;
+        use crate::model::reduced_fhn::ReducedSetFitzHughNagumo;
+        use crate::model::reduced_hr::ReducedSetHindmarshRose;
+        use crate::model::dumont_gutkin::DumontGutkin;
+        use crate::model::zerlaut_first::ZerlautAdaptationFirstOrder;
+        use crate::model::zerlaut_second::ZerlautAdaptationSecondOrder;
+        use crate::model::kionex::KIonEx;
 
         type B = NdArray<f32>;
 
@@ -548,6 +607,52 @@ mod tests {
                    <Kuramoto as NeuralMassModel<B>>::NVAR);
         assert_eq!(<JansenRit as NeuralMassModel<B>>::SVAR_RANGES.len(),
                    <JansenRit as NeuralMassModel<B>>::NVAR);
+        assert_eq!(<WilsonCowan as NeuralMassModel<B>>::SVAR_RANGES.len(),
+                   <WilsonCowan as NeuralMassModel<B>>::NVAR);
+        assert_eq!(<Linear as NeuralMassModel<B>>::SVAR_RANGES.len(),
+                   <Linear as NeuralMassModel<B>>::NVAR);
+        assert_eq!(<SupHopf as NeuralMassModel<B>>::SVAR_RANGES.len(),
+                   <SupHopf as NeuralMassModel<B>>::NVAR);
+        assert_eq!(<Hopfield as NeuralMassModel<B>>::SVAR_RANGES.len(),
+                   <Hopfield as NeuralMassModel<B>>::NVAR);
+        assert_eq!(<CoombesByrne2D as NeuralMassModel<B>>::SVAR_RANGES.len(),
+                   <CoombesByrne2D as NeuralMassModel<B>>::NVAR);
+        assert_eq!(<CoombesByrne as NeuralMassModel<B>>::SVAR_RANGES.len(),
+                   <CoombesByrne as NeuralMassModel<B>>::NVAR);
+        assert_eq!(<GastSchmidtKnoscheSD as NeuralMassModel<B>>::SVAR_RANGES.len(),
+                   <GastSchmidtKnoscheSD as NeuralMassModel<B>>::NVAR);
+        assert_eq!(<GastSchmidtKnoscheSF as NeuralMassModel<B>>::SVAR_RANGES.len(),
+                   <GastSchmidtKnoscheSF as NeuralMassModel<B>>::NVAR);
+        assert_eq!(<LarterBreakspear as NeuralMassModel<B>>::SVAR_RANGES.len(),
+                   <LarterBreakspear as NeuralMassModel<B>>::NVAR);
+        assert_eq!(<Epileptor2D as NeuralMassModel<B>>::SVAR_RANGES.len(),
+                   <Epileptor2D as NeuralMassModel<B>>::NVAR);
+        assert_eq!(<Epileptor as NeuralMassModel<B>>::SVAR_RANGES.len(),
+                   <Epileptor as NeuralMassModel<B>>::NVAR);
+        assert_eq!(<ReducedWongWangExcInh as NeuralMassModel<B>>::SVAR_RANGES.len(),
+                   <ReducedWongWangExcInh as NeuralMassModel<B>>::NVAR);
+        assert_eq!(<DecoBalancedExcInh as NeuralMassModel<B>>::SVAR_RANGES.len(),
+                   <DecoBalancedExcInh as NeuralMassModel<B>>::NVAR);
+        assert_eq!(<EpileptorCodim3 as NeuralMassModel<B>>::SVAR_RANGES.len(),
+                   <EpileptorCodim3 as NeuralMassModel<B>>::NVAR);
+        assert_eq!(<EpileptorCodim3SlowMod as NeuralMassModel<B>>::SVAR_RANGES.len(),
+                   <EpileptorCodim3SlowMod as NeuralMassModel<B>>::NVAR);
+        assert_eq!(<EpileptorRestingState as NeuralMassModel<B>>::SVAR_RANGES.len(),
+                   <EpileptorRestingState as NeuralMassModel<B>>::NVAR);
+        assert_eq!(<ZetterbergJansen as NeuralMassModel<B>>::SVAR_RANGES.len(),
+                   <ZetterbergJansen as NeuralMassModel<B>>::NVAR);
+        assert_eq!(<ReducedSetFitzHughNagumo as NeuralMassModel<B>>::SVAR_RANGES.len(),
+                   <ReducedSetFitzHughNagumo as NeuralMassModel<B>>::NVAR);
+        assert_eq!(<ReducedSetHindmarshRose as NeuralMassModel<B>>::SVAR_RANGES.len(),
+                   <ReducedSetHindmarshRose as NeuralMassModel<B>>::NVAR);
+        assert_eq!(<DumontGutkin as NeuralMassModel<B>>::SVAR_RANGES.len(),
+                   <DumontGutkin as NeuralMassModel<B>>::NVAR);
+        assert_eq!(<ZerlautAdaptationFirstOrder as NeuralMassModel<B>>::SVAR_RANGES.len(),
+                   <ZerlautAdaptationFirstOrder as NeuralMassModel<B>>::NVAR);
+        assert_eq!(<ZerlautAdaptationSecondOrder as NeuralMassModel<B>>::SVAR_RANGES.len(),
+                   <ZerlautAdaptationSecondOrder as NeuralMassModel<B>>::NVAR);
+        assert_eq!(<KIonEx as NeuralMassModel<B>>::SVAR_RANGES.len(),
+                   <KIonEx as NeuralMassModel<B>>::NVAR);
     }
 
     #[test]
