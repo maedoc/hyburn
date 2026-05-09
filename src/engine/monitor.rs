@@ -593,6 +593,7 @@ impl SpatialAverageMonitor {
     pub fn new(mask: Vec<f32>, period: usize, nvar: usize, n_regions: usize, nmodes: usize) -> Self {
         assert!(period > 0, "period must be > 0");
         let mask_sum: f32 = mask.iter().sum();
+        assert!(mask_sum.abs() > 1e-12, "spatial mask sum must be non-zero (got {})", mask_sum);
         Self {
             mask,
             period,
@@ -609,11 +610,7 @@ impl SpatialAverageMonitor {
     /// Compute spatial averages from a flat state vector `[nvar * n_regions * nmodes]`.
     fn compute_spatial_average(&self, flat: &[f32]) -> Vec<f32> {
         let mut avg = vec![0.0f32; self.nvar];
-        let inv_mask = if self.mask_sum.abs() < 1e-12 {
-            1.0 // avoid division by zero
-        } else {
-            1.0 / self.mask_sum
-        };
+        let inv_mask = 1.0 / self.mask_sum;
         let inv_nmodes = 1.0 / self.nmodes as f32;
 
         #[allow(clippy::needless_range_loop)]
@@ -894,6 +891,12 @@ mod tests {
         // spatial avg = (15+35)/2 = 25.0
         assert_eq!(flushed.len(), 1);
         assert!((flushed[0] - 25.0).abs() < 1e-5);
+    }
+
+    #[test]
+    #[should_panic(expected = "spatial mask sum must be non-zero")]
+    fn test_spatial_average_monitor_zero_mask_panics() {
+        SpatialAverageMonitor::new(vec![0.0, 0.0], 1, 1, 2, 1);
     }
 
     #[test]
