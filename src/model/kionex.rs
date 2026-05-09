@@ -13,6 +13,33 @@ impl<B: Backend> NeuralMassModel<B> for KIonEx {
         "Cm", "tau_n", "gamma", "epsilon",
     ];
 
+    const PARAM_RANGES: &'static [(f32, f32)] = &[
+        (-5.0, 5.0),      // E
+        (0.0, 20.0),      // K_bath
+        (0.0, 10.0),      // J
+        (-10.0, 5.0),     // eta
+        (0.001, 10.0),    // Delta
+        (-100.0, 0.0),    // c_minus
+        (0.0, 10.0),      // R_minus
+        (-100.0, 0.0),    // c_plus
+        (-10.0, 0.0),     // R_plus
+        (-100.0, 0.0),    // Vstar
+        (0.01, 10.0),     // Cm
+        (0.01, 100.0),    // tau_n
+        (0.001, 10.0),    // gamma
+        (0.0, 1.0),       // epsilon
+    ];
+
+    const SVAR_RANGES: &'static [(f32, f32)] = &[
+        (0.0, 10.0),      // x (clamped >= 0)
+        (-100.0, 50.0),   // V
+        (-1.0, 1.0),      // n
+        (-10.0, 10.0),    // DKi
+        (-10.0, 10.0),    // Kg
+    ];
+
+    const STVAR: &'static [usize] = &[0, 1, 2, 3, 4];
+
     fn dfun(state: Tensor<B, 2>, coupling: Tensor<B, 2>, params: &[f32]) -> Tensor<B, 2> {
         let state3 = state.unsqueeze_dim::<3>(0);
         let coupling3 = coupling.unsqueeze_dim::<3>(0);

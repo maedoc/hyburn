@@ -12,6 +12,32 @@ impl<B: Backend> NeuralMassModel<B> for ReducedSetHindmarshRose {
         "K11", "K12", "K21", "sigma", "mu",
     ];
 
+    const PARAM_RANGES: &'static [(f32, f32)] = &[
+        (0.00001, 0.1),   // r
+        (0.01, 10.0),     // a
+        (0.01, 10.0),     // b
+        (0.01, 10.0),     // c
+        (0.01, 10.0),     // d
+        (0.01, 10.0),     // s
+        (-5.0, 0.0),      // xo
+        (0.0, 10.0),      // K11
+        (0.0, 10.0),      // K12
+        (0.0, 10.0),      // K21
+        (-5.0, 5.0),      // sigma
+        (-5.0, 10.0),     // mu
+    ];
+
+    const SVAR_RANGES: &'static [(f32, f32)] = &[
+        (-5.0, 5.0),      // x1
+        (-10.0, 5.0),     // y1
+        (-5.0, 5.0),      // x2
+        (-10.0, 5.0),     // y2
+        (-5.0, 5.0),      // x3
+        (-10.0, 5.0),     // y3
+    ];
+
+    const STVAR: &'static [usize] = &[0, 1, 2, 3, 4, 5];
+
     fn dfun(state: Tensor<B, 2>, coupling: Tensor<B, 2>, params: &[f32]) -> Tensor<B, 2> {
         let state3 = state.unsqueeze_dim::<3>(0);
         let coupling3 = coupling.unsqueeze_dim::<3>(0);

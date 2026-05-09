@@ -33,6 +33,28 @@ impl<B: Backend> NeuralMassModel<B> for Generic2dOscillator {
         "tau", "I", "a", "b", "c", "d", "e", "f", "g", "alpha", "beta", "gamma"
     ];
 
+    const PARAM_RANGES: &'static [(f32, f32)] = &[
+        (0.01, 100.0),    // tau
+        (-5.0, 5.0),      // I
+        (-5.0, 5.0),      // a
+        (-20.0, 15.0),    // b
+        (-10.0, 10.0),    // c
+        (0.0001, 1.0),    // d
+        (-5.0, 5.0),      // e
+        (0.01, 10.0),     // f
+        (-5.0, 5.0),      // g
+        (-5.0, 5.0),      // alpha
+        (0.01, 10.0),     // beta
+        (-1.0, 1.0),      // gamma
+    ];
+
+    const SVAR_RANGES: &'static [(f32, f32)] = &[
+        (-2.0, 4.0),      // V
+        (-6.0, 6.0),      // W
+    ];
+
+    const STVAR: &'static [usize] = &[0, 1];
+
     fn dfun(
         state: Tensor<B, 2>,
         coupling: Tensor<B, 2>,

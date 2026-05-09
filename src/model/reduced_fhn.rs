@@ -11,6 +11,26 @@ impl<B: Backend> NeuralMassModel<B> for ReducedSetFitzHughNagumo {
         "tau", "a", "b", "K11", "K12", "K21", "sigma", "mu",
     ];
 
+    const PARAM_RANGES: &'static [(f32, f32)] = &[
+        (0.01, 100.0),    // tau
+        (-5.0, 5.0),      // a
+        (-5.0, 5.0),      // b
+        (0.0, 10.0),      // K11
+        (0.0, 10.0),      // K12
+        (0.0, 10.0),      // K21
+        (-5.0, 5.0),      // sigma
+        (-5.0, 5.0),      // mu
+    ];
+
+    const SVAR_RANGES: &'static [(f32, f32)] = &[
+        (-5.0, 5.0),      // V
+        (-5.0, 5.0),      // W
+        (-5.0, 5.0),      // V2
+        (-5.0, 5.0),      // W2
+    ];
+
+    const STVAR: &'static [usize] = &[0, 1, 2, 3];
+
     fn dfun(state: Tensor<B, 2>, coupling: Tensor<B, 2>, params: &[f32]) -> Tensor<B, 2> {
         let state3 = state.unsqueeze_dim::<3>(0);
         let coupling3 = coupling.unsqueeze_dim::<3>(0);

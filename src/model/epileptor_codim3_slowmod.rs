@@ -18,6 +18,46 @@ impl<B: Backend> NeuralMassModel<B> for EpileptorCodim3SlowMod {
         "cA", "cB",
     ];
 
+    const PARAM_RANGES: &'static [(f32, f32)] = &[
+        (-1.0, 1.0),      // mu1_start
+        (-1.0, 1.0),      // mu2_start
+        (-1.0, 1.0),      // nu_start
+        (-1.0, 1.0),      // mu1_stop
+        (-1.0, 1.0),      // mu2_stop
+        (-1.0, 1.0),      // nu_stop
+        (0.01, 10.0),     // b
+        (0.01, 10.0),     // R
+        (0.0, 0.1),       // c
+        (0.01, 5.0),      // dstar
+        (-5.0, 5.0),      // Ks
+        (0.1, 10.0),      // N
+        (0.0, 2.0),       // modification
+        (-2.0, 2.0),      // G0
+        (-2.0, 2.0),      // G1
+        (-2.0, 2.0),      // G2
+        (-2.0, 2.0),      // L0
+        (-2.0, 2.0),      // L1
+        (-2.0, 2.0),      // L2
+        (-2.0, 2.0),      // H0
+        (-2.0, 2.0),      // H1
+        (-2.0, 2.0),      // H2
+        (-2.0, 2.0),      // M0
+        (-2.0, 2.0),      // M1
+        (-2.0, 2.0),      // M2
+        (0.0, 0.1),       // cA
+        (0.0, 0.1),       // cB
+    ];
+
+    const SVAR_RANGES: &'static [(f32, f32)] = &[
+        (-5.0, 5.0),      // x
+        (-5.0, 5.0),      // y
+        (-5.0, 5.0),      // z
+        (-5.0, 5.0),      // slow1
+        (-5.0, 5.0),      // slow2
+    ];
+
+    const STVAR: &'static [usize] = &[0, 1, 2, 3, 4];
+
     fn dfun(state: Tensor<B, 2>, coupling: Tensor<B, 2>, params: &[f32]) -> Tensor<B, 2> {
         let state3 = state.unsqueeze_dim::<3>(0);
         let coupling3 = coupling.unsqueeze_dim::<3>(0);

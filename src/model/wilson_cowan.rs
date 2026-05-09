@@ -32,6 +32,38 @@ impl<B: Backend> NeuralMassModel<B> for WilsonCowan {
         "r_e", "r_i", "k_e", "k_i", "P", "Q", "alpha_e", "alpha_i",
     ];
 
+    const PARAM_RANGES: &'static [(f32, f32)] = &[
+        (0.0, 50.0),      // c_ee
+        (0.0, 50.0),      // c_ei
+        (0.0, 50.0),      // c_ie
+        (0.0, 50.0),      // c_ii
+        (0.1, 100.0),     // tau_e
+        (0.1, 100.0),     // tau_i
+        (0.01, 10.0),     // a_e
+        (0.0, 10.0),      // b_e
+        (0.01, 10.0),     // c_e
+        (-5.0, 5.0),      // theta_e
+        (0.01, 10.0),     // a_i
+        (0.0, 10.0),      // b_i
+        (0.01, 10.0),     // c_i
+        (-5.0, 5.0),      // theta_i
+        (0.0, 2.0),       // r_e
+        (0.0, 2.0),       // r_i
+        (0.0, 2.0),       // k_e
+        (0.0, 2.0),       // k_i
+        (-5.0, 5.0),      // P
+        (-5.0, 5.0),      // Q
+        (0.01, 5.0),      // alpha_e
+        (0.01, 5.0),      // alpha_i
+    ];
+
+    const SVAR_RANGES: &'static [(f32, f32)] = &[
+        (0.0, 1.0),       // E (clamped [0,1])
+        (0.0, 1.0),       // I (clamped [0,1])
+    ];
+
+    const STVAR: &'static [usize] = &[0, 1];
+
     fn dfun(
         state: Tensor<B, 2>,
         coupling: Tensor<B, 2>,

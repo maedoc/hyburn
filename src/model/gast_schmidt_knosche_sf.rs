@@ -11,6 +11,27 @@ impl<B: Backend> NeuralMassModel<B> for GastSchmidtKnoscheSF {
         "tau", "tau_A", "alpha", "I", "Delta", "J", "eta", "cr", "cv"
     ];
 
+    const PARAM_RANGES: &'static [(f32, f32)] = &[
+        (0.01, 100.0),    // tau
+        (0.1, 100.0),     // tau_A
+        (0.01, 20.0),     // alpha
+        (-5.0, 5.0),      // I
+        (0.001, 10.0),    // Delta
+        (0.0, 50.0),      // J
+        (-10.0, 5.0),     // eta
+        (-5.0, 5.0),      // cr
+        (-5.0, 5.0),      // cv
+    ];
+
+    const SVAR_RANGES: &'static [(f32, f32)] = &[
+        (0.0, 10.0),      // r (clamped >= 0)
+        (-10.0, 10.0),    // V
+        (-10.0, 10.0),    // a
+        (-10.0, 10.0),    // b
+    ];
+
+    const STVAR: &'static [usize] = &[0, 1, 2, 3];
+
     fn dfun(state: Tensor<B, 2>, coupling: Tensor<B, 2>, params: &[f32]) -> Tensor<B, 2> {
         let state3 = state.unsqueeze_dim::<3>(0);
         let coupling3 = coupling.unsqueeze_dim::<3>(0);
