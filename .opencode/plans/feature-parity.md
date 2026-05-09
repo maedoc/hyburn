@@ -505,24 +505,24 @@ So: 2G must complete before 2F can use model ranges in LHS sampling.
 |---|---|---|
 | 28 neural mass models | -- | Done |
 | 7 reference tests | -- | Done |
-| RK4 integrator | 1A | Pending |
-| RK4 stochastic | 1A | Pending |
-| Per-variable noise | 1B | Pending |
-| Linear coupling b offset | 1C | Pending |
-| ScaledLinear coupling | 1C | Pending |
-| HyperbolicTangent coupling | 1C | Pending |
-| SigmoidalJansenRit coupling | 1C | Pending |
-| PreSigmoidal coupling | 1C | Pending |
-| EEG/MEG/iEEG monitors | 1D | Pending |
-| SpatialAverage monitor | 1D | Pending |
-| BOLD in batch sweeps | 1D | Pending |
-| Speed -> delay conversion | 1E | Pending |
-| Multi-parameter batch sweep | 2F | Pending |
-| Model PARAM_RANGES metadata | 2G | Pending |
-| Model SVAR_RANGES metadata | 2G | Pending |
-| Latin Hypercube Sampling | 2G | Pending |
-| Sobol sequence sampling | 2G | Pending |
-| PriorConfig with named params + model ranges | 2G | Pending |
-| MAF save/load (BinFileRecorder) | 2H | Pending |
-| CLI infer subcommand | 2H | Pending |
-| GPU validation (all new features) | 3I-K | Pending |
+| RK4 integrator | 1A | **Done** |
+| RK4 stochastic | 1A | **Done** |
+| Per-variable noise | 1B | **Done** |
+| Linear coupling b offset | 1C | **Done** |
+| ScaledLinear coupling | 1C | **Done** |
+| HyperbolicTangent coupling | 1C | **Done** |
+| SigmoidalJansenRit coupling | 1C | **Done** |
+| PreSigmoidal coupling | 1C | **Done** |
+| EEG/MEG/iEEG monitors | 1D | **Done** |
+| SpatialAverage monitor | 1D | **Done** |
+| BOLD in batch sweeps | 1D | **Done** |
+| Speed -> delay conversion | 1E | **Done** |
+| Multi-parameter batch sweep | 2F | **Done** |
+| Model PARAM_RANGES metadata | 2G | **Done** |
+| Model SVAR_RANGES metadata | 2G | **Done** |
+| Latin Hypercube Sampling | 2G | **Done** |
+| Halton sequence sampling | 2G | **Done** (Halton instead of Sobol) |
+| PriorConfig with named params + model ranges | 2G | **Done** |
+| MAF save/load (BinFileRecorder) | 2H | **Done** |
+| CLI infer subcommand | 2H | **Done** |
+| GPU validation (wgpu/Metal) | 3I-K | **Done** (252 tests pass on wgpu) |
