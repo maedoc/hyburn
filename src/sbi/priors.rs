@@ -94,7 +94,7 @@ impl PriorDistribution {
                     SamplingMethod::Uniform => uniform_samples(n, &ranges, rng_seed),
                     SamplingMethod::Lhs => latin_hypercube(n, n_dims, &ranges, rng_seed),
                     SamplingMethod::Halton => halton_samples(n, n_dims, &ranges, rng_seed),
-                    SamplingMethod::Sobol => latin_hypercube(n, n_dims, &ranges, rng_seed),
+                    SamplingMethod::Sobol => sobol_samples(n, n_dims, &ranges, rng_seed),
                 };
 
                 let flat: Vec<f32> = samples.into_iter().flatten().collect();
@@ -198,7 +198,7 @@ pub fn halton_samples(
     n_samples: usize,
     n_dims: usize,
     ranges: &[(f32, f32)],
-    seed: u64,
+    offset: u64,
 ) -> Vec<Vec<f32>> {
     let primes: [usize; 20] = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71];
 
@@ -207,7 +207,7 @@ pub fn halton_samples(
             (0..n_dims)
                 .map(|d| {
                     let base = primes[d % primes.len()];
-                    let u = halton(i + seed as usize + 1, base);
+                    let u = halton(i + offset as usize + 1, base);
                     let (lo, hi) = ranges[d];
                     lo + u * (hi - lo)
                 })
@@ -226,6 +226,36 @@ fn halton(index: usize, base: usize) -> f32 {
         f /= base as f64;
     }
     result as f32
+}
+
+pub fn sobol_samples(
+    n_samples: usize,
+    n_dims: usize,
+    ranges: &[(f32, f32)],
+    seed: u64,
+) -> Vec<Vec<f32>> {
+    use sobol::Sobol;
+    use sobol::params::JoeKuoD6;
+
+    let params = if n_dims <= 100 {
+        JoeKuoD6::minimal()
+    } else if n_dims <= 1000 {
+        JoeKuoD6::standard()
+    } else {
+        JoeKuoD6::extended()
+    };
+    let seq = Sobol::<f32>::new(n_dims, &params);
+    let start = seed as usize;
+
+    seq.skip(start)
+        .take(n_samples)
+        .map(|point| {
+            point.iter()
+                .zip(ranges.iter())
+                .map(|(u, &(lo, hi))| lo + *u * (hi - lo))
+                .collect()
+        })
+        .collect()
 }
 
 /// Resolve a parameter range from a model given a name like "subnetworks[0].params[1]".
@@ -364,6 +394,16 @@ mod tests {
     }
 
     #[test]
+    fn test_halton_offset_produces_different_sequences() {
+        let ranges = vec![(0.0f32, 1.0f32), (0.0f32, 1.0f32)];
+        let s0 = halton_samples(10, 2, &ranges, 0);
+        let s1 = halton_samples(10, 2, &ranges, 100);
+        let s2 = halton_samples(10, 2, &ranges, 200);
+        assert_ne!(s0, s1, "different offsets should produce different sequences");
+        assert_ne!(s1, s2, "different offsets should produce different sequences");
+    }
+
+    #[test]
     fn test_halton_base2() {
         let h0 = halton(1, 2);
         assert!((h0 - 0.5).abs() < 1e-6, "halton(1,2) = {}, expected 0.5", h0);
@@ -371,6 +411,39 @@ mod tests {
         assert!((h1 - 0.25).abs() < 1e-6, "halton(2,2) = {}, expected 0.25", h1);
         let h2 = halton(3, 2);
         assert!((h2 - 0.75).abs() < 1e-6, "halton(3,2) = {}, expected 0.75", h2);
+    }
+
+    #[test]
+    fn test_sobol_samples_bounds() {
+        let ranges = vec![(0.0f32, 1.0f32), (-2.0f32, 2.0f32)];
+        let samples = sobol_samples(100, 2, &ranges, 0);
+        assert_eq!(samples.len(), 100);
+        for s in &samples {
+            assert!(s[0] >= 0.0 && s[0] <= 1.0, "sobol dim0 out of bounds: {}", s[0]);
+            assert!(s[1] >= -2.0 && s[1] <= 2.0, "sobol dim1 out of bounds: {}", s[1]);
+        }
+    }
+
+    #[test]
+    fn test_sobol_differs_from_lhs() {
+        let ranges = vec![(0.0f32, 1.0f32), (0.0f32, 1.0f32)];
+        let sobol = sobol_samples(50, 2, &ranges, 0);
+        let lhs = latin_hypercube(50, 2, &ranges, 42);
+        assert_ne!(sobol, lhs, "Sobol and LHS should produce different samples");
+    }
+
+    #[test]
+    fn test_sobol_via_sample_with_method() {
+        let prior = PriorDistribution::BoxUniform(vec![
+            ParamPrior::new("a", 0.0, 1.0),
+            ParamPrior::new("b", -1.0, 1.0),
+        ]);
+        let (samples, _) = prior.sample_with_method(50, Some(0), SamplingMethod::Sobol).unwrap();
+        assert_eq!(samples.len(), 100);
+        for i in 0..50 {
+            assert!(samples[i * 2 + 0] >= 0.0 && samples[i * 2 + 0] <= 1.0);
+            assert!(samples[i * 2 + 1] >= -1.0 && samples[i * 2 + 1] <= 1.0);
+        }
     }
 
     #[test]
