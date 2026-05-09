@@ -330,7 +330,7 @@ impl<B: Backend> HybridEngine<B> {
                     state_2d,
                     coupling,
                     dt,
-                    self.nsig,
+                    &self.nsig,
                     |s, c| sub.dfun(s, c),
                     |s| sub.clamp(s),
                 ),
@@ -338,7 +338,22 @@ impl<B: Backend> HybridEngine<B> {
                     state_2d,
                     coupling,
                     dt,
-                    self.nsig,
+                    &self.nsig,
+                    |s, c| sub.dfun(s, c),
+                    |s| sub.clamp(s),
+                ),
+                IntegratorKind::Rk4 => super::integrator::rk4_step(
+                    state_2d,
+                    coupling,
+                    dt,
+                    |s, c| sub.dfun(s, c),
+                    |s| sub.clamp(s),
+                ),
+                IntegratorKind::Rk4Stochastic => super::integrator::rk4_stochastic_step(
+                    state_2d,
+                    coupling,
+                    dt,
+                    &self.nsig,
                     |s, c| sub.dfun(s, c),
                     |s| sub.clamp(s),
                 ),
@@ -427,13 +442,14 @@ impl<B: Backend> HybridEngine<B> {
     ///
     /// Not available in WASM builds (no filesystem access).
     ///
-    /// The binary format is:
+    /// The binary format (v2):
     /// - 8 bytes magic (`HYBURNCK`)
-    /// - 8 bytes version (u64 LE)
+    /// - 8 bytes version (u64 LE) = 2
     /// - 8 bytes step (u64 LE)
     /// - 8 bytes dt (f64 LE)
     /// - 1 byte integrator kind + 7 bytes padding
-    /// - 4 bytes nsig (f32 LE) + 4 bytes padding
+    /// - 4 bytes nsig_len (u32 LE) + 4 bytes padding
+    /// - nsig_len * 4 bytes nsig_vec (f32 LE each)
     /// - 8 bytes number of subnetworks (u64 LE)
     /// - Per subnetwork: 8 bytes nvar, 8 bytes nnodes, 8 bytes nmodes (u64 LE)
     /// - Concatenated flat f32 LE state data for all subnetworks.
@@ -454,10 +470,16 @@ impl<B: Backend> HybridEngine<B> {
             IntegratorKind::Euler => 2,
             IntegratorKind::EulerStochastic => 3,
             IntegratorKind::HeunStochastic => 4,
+            IntegratorKind::Rk4 => 5,
+            IntegratorKind::Rk4Stochastic => 6,
         };
         f.write_all(&[integrator_byte, 0, 0, 0, 0, 0, 0, 0])?;
-        f.write_all(&self.nsig.to_le_bytes())?;
-        f.write_all(&[0, 0, 0, 0])?; // padding to 8 bytes
+        let nsig_len = self.nsig.len() as u32;
+        f.write_all(&nsig_len.to_le_bytes())?;
+        f.write_all(&[0u8; 4])?; // padding
+        for &val in &self.nsig {
+            f.write_all(&val.to_le_bytes())?;
+        }
 
         let n_subs = self.subnetworks.len() as u64;
         f.write_all(&n_subs.to_le_bytes())?;
@@ -485,6 +507,7 @@ impl<B: Backend> HybridEngine<B> {
     ///
     /// Not available in WASM builds (no filesystem access).
     ///
+    /// Supports both v1 (scalar nsig) and v2 (per-variable nsig) formats.
     /// Verifies that the subnetwork shapes match the checkpoint metadata,
     /// then restores `step`, `dt`, `integrator`, `nsig`, and all states.
     #[cfg(not(target_arch = "wasm32"))]
@@ -504,6 +527,16 @@ impl<B: Backend> HybridEngine<B> {
                     buf[offset + 4], buf[offset + 5], buf[offset + 6], buf[offset + 7],
                 ]);
                 offset += 8;
+                val
+            }};
+        }
+
+        macro_rules! read_u32 {
+            () => {{
+                let val = u32::from_le_bytes([
+                    buf[offset], buf[offset + 1], buf[offset + 2], buf[offset + 3],
+                ]);
+                offset += 4;
                 val
             }};
         }
@@ -545,18 +578,42 @@ impl<B: Backend> HybridEngine<B> {
         }
 
         let version = read_u64!();
-        if version != CKPT_VERSION {
+
+        let step = read_u64!() as usize;
+        let dt = read_f64!();
+        let integrator_byte = read_u64!() as u8;
+
+        // Read nsig based on version
+        let nsig_vec = if version == 1 {
+            // v1: scalar nsig (f32) + 4 bytes padding
+            let scalar_nsig = read_f32!();
+            offset += 4; // padding
+            vec![scalar_nsig]
+        } else if version == 2 {
+            // v2: nsig_len (u32) + 4 bytes padding + nsig_len * f32 values
+            let nsig_len = read_u32!() as usize;
+            offset += 4; // padding
+            check_remaining!(nsig_len * 4);
+            let mut v = Vec::with_capacity(nsig_len);
+            for _ in 0..nsig_len {
+                v.push(read_f32!());
+            }
+            v
+        } else {
+            return Err(SimulationError::InvalidState(format!(
+                "Unsupported checkpoint version: {} (expected 1 or 2)",
+                version
+            )));
+        };
+
+        // v1 check was done above for version; for v2 we already accepted it
+        if version != CKPT_VERSION && version != 1 {
             return Err(SimulationError::InvalidState(format!(
                 "Unsupported checkpoint version: {} (expected {})",
                 version, CKPT_VERSION
             )));
         }
 
-        let step = read_u64!() as usize;
-        let dt = read_f64!();
-        let integrator_byte = read_u64!() as u8;
-        let nsig = read_f32!();
-        offset += 4; // padding
         let n_subs = read_u64!() as usize;
 
         if n_subs != self.subnetworks.len() {
@@ -571,6 +628,8 @@ impl<B: Backend> HybridEngine<B> {
             2 => IntegratorKind::Euler,
             3 => IntegratorKind::EulerStochastic,
             4 => IntegratorKind::HeunStochastic,
+            5 => IntegratorKind::Rk4,
+            6 => IntegratorKind::Rk4Stochastic,
             _ => return Err(SimulationError::InvalidState(format!(
                 "Unknown integrator kind in checkpoint: {}", integrator_byte
             ))),
@@ -614,7 +673,7 @@ impl<B: Backend> HybridEngine<B> {
         self.step = step;
         self.dt = dt;
         self.integrator = integrator;
-        self.nsig = nsig;
+        self.nsig = nsig_vec;
 
         log::info!("Resumed from checkpoint {} at step {}", path, self.step);
         Ok(())

@@ -7,7 +7,7 @@
 use std::time::Instant;
 
 use hyburn::config::{
-    InitialStateConfig, NetworkConfig, ProjectionConfig, SimConfig,
+    InitialStateConfig, NetworkConfig, NsigConfig, ProjectionConfig, SimConfig,
     SubnetworkConfig, WeightsConfig,
 };
 use hyburn::engine::batch_engine::SweepParam;
@@ -84,7 +84,7 @@ fn make_3subnet_config(nnodes: usize) -> SimConfig {
         integrator: hyburn::engine::integrator::IntegratorKind::Heun,
         monitors: vec![],
         stimuli: vec![],
-        nsig: 0.0,
+        nsig: NsigConfig::Scalar(0.0),
             backend: "ndarray".to_string(),
     }
 }

@@ -3,7 +3,7 @@
 
 use std::time::Instant;
 use burn::prelude::Backend;
-use hyburn::config::{InitialStateConfig, NetworkConfig, ProjectionConfig, SimConfig, SubnetworkConfig, WeightsConfig};
+use hyburn::config::{InitialStateConfig, NetworkConfig, NsigConfig, ProjectionConfig, SimConfig, SubnetworkConfig, WeightsConfig};
 use hyburn::engine::integrator::IntegratorKind;
 use hyburn::model::g2do::g2do_default_params;
 use hyburn::model::jansen_rit::jansen_rit_default_params;
@@ -36,7 +36,7 @@ fn make_3subnet_config(nnodes: usize) -> SimConfig {
                 ProjectionConfig { src: 2, tgt: 0, conn_type: "all_to_all".to_string(), weights: WeightsConfig::Scalar(0.01), delays: vec![], coupling_fn: "Linear".to_string(), coupling_params: vec![0.01], cvar_map: "0:0".to_string() },
             ],
         },
-        integrator: IntegratorKind::Heun, monitors: vec![], stimuli: vec![], nsig: 0.0,
+        integrator: IntegratorKind::Heun, monitors: vec![], stimuli: vec![], nsig: NsigConfig::Scalar(0.0),
     }
 }
 

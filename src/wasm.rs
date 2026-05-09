@@ -259,12 +259,12 @@ impl WebEngine {
         self.engine.dt
     }
 
-    /// Get the noise amplitude (nsig).
+    /// Get the noise amplitude (nsig). Returns 0.0 for per-variable nsig or the scalar value.
     pub fn nsig(&self) -> f32 {
-        self.engine.nsig
+        self.engine.nsig.first().copied().unwrap_or(0.0)
     }
 
-    /// Get the integrator kind as a string ("heun", "euler", "euler_stochastic", "heun_stochastic").
+    /// Get the integrator kind as a string ("heun", "euler", "euler_stochastic", "heun_stochastic", "rk4", "rk4_stochastic").
     pub fn integrator(&self) -> String {
         self.engine.integrator.to_string()
     }

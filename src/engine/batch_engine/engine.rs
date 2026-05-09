@@ -71,6 +71,8 @@ pub struct BatchHybridEngine<B: Backend> {
     /// This matches the Numba CUDA benchmark behavior.
     /// When false, use the config's integrator for all models uniformly.
     pub hybrid_integrator: bool,
+    /// Noise amplitude per variable for stochastic integration.
+    pub nsig_vec: Vec<f32>,
     /// Device for tensor allocation.
     pub device: B::Device,
     /// Pre-computed projections with cached weight tensors.
@@ -334,6 +336,9 @@ impl<B: Backend> BatchHybridEngine<B> {
             }
         }
 
+        let first_nvar = models.first().map(|m| m.nvar()).unwrap_or(1);
+        let nsig_vec = base_config.nsig.to_vec(first_nvar);
+
         Ok(Self {
             models,
             states,
@@ -344,6 +349,7 @@ impl<B: Backend> BatchHybridEngine<B> {
             dt: base_config.dt as f32,
             integrator: base_config.integrator,
             hybrid_integrator: false,
+            nsig_vec,
             device,
             precomputed_projections,
             bold_monitors,
@@ -581,7 +587,67 @@ impl<B: Backend> BatchHybridEngine<B> {
                     let deriv2 = dfun_batch(model, predictor, coupling, params, sweep_param);
                     self.states[i] = self.states[i].clone() + (deriv + deriv2).mul_scalar(self.dt * 0.5);
                 } else {
-                    self.states[i] = self.states[i].clone() + deriv.mul_scalar(self.dt);
+                    match self.integrator {
+                        IntegratorKind::Euler => {
+                            self.states[i] = self.states[i].clone() + deriv.mul_scalar(self.dt);
+                        }
+                        IntegratorKind::Rk4 => {
+                            let k1 = deriv;
+                            let mut k2_state = self.states[i].clone() + k1.clone().mul_scalar(self.dt / 2.0);
+                            clamp_batch(model, &mut k2_state);
+                            let k2 = dfun_batch(model, k2_state, coupling.clone(), params, sweep_param);
+                            let mut k3_state = self.states[i].clone() + k2.clone().mul_scalar(self.dt / 2.0);
+                            clamp_batch(model, &mut k3_state);
+                            let k3 = dfun_batch(model, k3_state, coupling.clone(), params, sweep_param);
+                            let mut k4_state = self.states[i].clone() + k3.clone().mul_scalar(self.dt);
+                            clamp_batch(model, &mut k4_state);
+                            let k4 = dfun_batch(model, k4_state, coupling, params, sweep_param);
+                            self.states[i] = self.states[i].clone() + (k1 + k2.mul_scalar(2.0) + k3.mul_scalar(2.0) + k4).mul_scalar(self.dt / 6.0);
+                        }
+                        IntegratorKind::EulerStochastic => {
+                            let dims = self.states[i].shape().dims;
+                            let noise = crate::engine::integrator::generate_noise_per_var::<B>(
+                                [dims[1], dims[2]], &self.nsig_vec, self.dt, &self.device,
+                            );
+                            // Expand noise from [nnodes*nmodes, nvar] to [n_sweep, nnodes*nmodes, nvar]
+                            let noise_3d = noise.unsqueeze_dim::<3>(0).expand([dims[0], dims[1], dims[2]]);
+                            self.states[i] = self.states[i].clone() + deriv.mul_scalar(self.dt) + noise_3d;
+                        }
+                        IntegratorKind::HeunStochastic => {
+                            let dims = self.states[i].shape().dims;
+                            let noise = crate::engine::integrator::generate_noise_per_var::<B>(
+                                [dims[1], dims[2]], &self.nsig_vec, self.dt, &self.device,
+                            );
+                            let noise_3d = noise.unsqueeze_dim::<3>(0).expand([dims[0], dims[1], dims[2]]);
+                            let mut predictor = self.states[i].clone() + deriv.clone().mul_scalar(self.dt) + noise_3d.clone();
+                            clamp_batch(model, &mut predictor);
+                            let deriv2 = dfun_batch(model, predictor, coupling, params, sweep_param);
+                            self.states[i] = self.states[i].clone() + (deriv + deriv2).mul_scalar(self.dt * 0.5) + noise_3d;
+                        }
+                        IntegratorKind::Rk4Stochastic => {
+                            let k1 = deriv;
+                            let mut k2_state = self.states[i].clone() + k1.clone().mul_scalar(self.dt / 2.0);
+                            clamp_batch(model, &mut k2_state);
+                            let k2 = dfun_batch(model, k2_state, coupling.clone(), params, sweep_param);
+                            let mut k3_state = self.states[i].clone() + k2.clone().mul_scalar(self.dt / 2.0);
+                            clamp_batch(model, &mut k3_state);
+                            let k3 = dfun_batch(model, k3_state, coupling.clone(), params, sweep_param);
+                            let mut k4_state = self.states[i].clone() + k3.clone().mul_scalar(self.dt);
+                            clamp_batch(model, &mut k4_state);
+                            let k4 = dfun_batch(model, k4_state, coupling, params, sweep_param);
+                            let deterministic = self.states[i].clone() + (k1 + k2.mul_scalar(2.0) + k3.mul_scalar(2.0) + k4).mul_scalar(self.dt / 6.0);
+                            let dims = deterministic.shape().dims;
+                            let noise = crate::engine::integrator::generate_noise_per_var::<B>(
+                                [dims[1], dims[2]], &self.nsig_vec, self.dt, &self.device,
+                            );
+                            let noise_3d = noise.unsqueeze_dim::<3>(0).expand([dims[0], dims[1], dims[2]]);
+                            self.states[i] = deterministic + noise_3d;
+                        }
+                        _ => {
+                            // Heun is handled above in use_heun branch
+                            self.states[i] = self.states[i].clone() + deriv.mul_scalar(self.dt);
+                        }
+                    }
                 }
 
                 clamp_batch(model, &mut self.states[i]);
@@ -762,7 +828,7 @@ mod tests {
             integrator: IntegratorKind::Heun,
             monitors: vec![],
             stimuli: vec![],
-            nsig: 0.0,
+            nsig: crate::config::NsigConfig::Scalar(0.0),
             backend: "ndarray".to_string(),
         };
 
@@ -807,7 +873,7 @@ mod tests {
             integrator: IntegratorKind::Euler,
             monitors: vec![],
             stimuli: vec![],
-            nsig: 0.0,
+            nsig: crate::config::NsigConfig::Scalar(0.0),
             backend: "ndarray".to_string(),
         };
 
@@ -974,7 +1040,7 @@ mod tests {
             integrator: IntegratorKind::Euler,
             monitors: vec![],
             stimuli: vec![],
-            nsig: 0.0,
+            nsig: crate::config::NsigConfig::Scalar(0.0),
             backend: "ndarray".to_string(),
         };
 
@@ -1026,7 +1092,7 @@ mod tests {
             integrator: IntegratorKind::Heun,
             monitors: vec![],
             stimuli: vec![],
-            nsig: 0.0,
+            nsig: crate::config::NsigConfig::Scalar(0.0),
             backend: "ndarray".to_string(),
         };
 
@@ -1090,7 +1156,7 @@ mod tests {
             integrator: IntegratorKind::Heun,
             monitors: vec![],
             stimuli: vec![],
-            nsig: 0.0,
+            nsig: crate::config::NsigConfig::Scalar(0.0),
             backend: "ndarray".to_string(),
         };
 
@@ -1161,7 +1227,7 @@ mod tests {
             integrator: IntegratorKind::Heun,
             monitors: vec![],
             stimuli: vec![],
-            nsig: 0.0,
+            nsig: crate::config::NsigConfig::Scalar(0.0),
             backend: "ndarray".to_string(),
         };
 
@@ -1231,7 +1297,7 @@ mod tests {
             integrator: IntegratorKind::Heun,
             monitors: vec![],
             stimuli: vec![],
-            nsig: 0.0,
+            nsig: crate::config::NsigConfig::Scalar(0.0),
             backend: "ndarray".to_string(),
         };
 
@@ -1297,7 +1363,7 @@ mod tests {
             integrator: IntegratorKind::Heun,
             monitors: vec![],
             stimuli: vec![],
-            nsig: 0.0,
+            nsig: crate::config::NsigConfig::Scalar(0.0),
             backend: "ndarray".to_string(),
         };
 
@@ -1362,7 +1428,7 @@ mod tests {
             integrator: IntegratorKind::Heun,
             monitors: vec![],
             stimuli: vec![],
-            nsig: 0.0,
+            nsig: crate::config::NsigConfig::Scalar(0.0),
             backend: "ndarray".to_string(),
         };
 
@@ -1476,7 +1542,7 @@ mod tests {
             integrator: IntegratorKind::Heun,
             monitors: vec![],
             stimuli: vec![],
-            nsig: 0.0,
+            nsig: crate::config::NsigConfig::Scalar(0.0),
             backend: "ndarray".to_string(),
         };
 
@@ -1599,7 +1665,7 @@ mod tests {
             integrator: IntegratorKind::Euler,
             monitors: vec![],
             stimuli: vec![],
-            nsig: 0.0,
+            nsig: crate::config::NsigConfig::Scalar(0.0),
             backend: "ndarray".to_string(),
         };
 
@@ -1722,7 +1788,7 @@ mod tests {
             integrator: IntegratorKind::Heun,
             monitors: vec![],
             stimuli: vec![],
-            nsig: 0.0,
+            nsig: crate::config::NsigConfig::Scalar(0.0),
             backend: "ndarray".to_string(),
         };
 
@@ -1781,7 +1847,7 @@ mod tests {
             integrator: IntegratorKind::Heun,
             monitors: vec![],
             stimuli: vec![],
-            nsig: 0.0,
+            nsig: crate::config::NsigConfig::Scalar(0.0),
             backend: "ndarray".to_string(),
         };
 
@@ -1852,7 +1918,7 @@ mod tests {
             integrator: IntegratorKind::Heun,
             monitors: vec![],
             stimuli: vec![],
-            nsig: 0.0,
+            nsig: crate::config::NsigConfig::Scalar(0.0),
             backend: "ndarray".to_string(),
         };
 
@@ -1945,7 +2011,7 @@ mod tests {
                 integrator: IntegratorKind::Heun,
                 monitors: vec![],
                 stimuli: vec![],
-                nsig: 0.0,
+                nsig: crate::config::NsigConfig::Scalar(0.0),
             backend: "ndarray".to_string(),
             };
 
@@ -2021,7 +2087,7 @@ mod tests {
             integrator: IntegratorKind::Euler,
             monitors: vec![],
             stimuli: vec![],
-            nsig: 0.0,
+            nsig: crate::config::NsigConfig::Scalar(0.0),
             backend: "ndarray".to_string(),
         };
 
@@ -2075,7 +2141,7 @@ mod tests {
             integrator: IntegratorKind::Euler,
             monitors: vec![],
             stimuli: vec![],
-            nsig: 0.0,
+            nsig: crate::config::NsigConfig::Scalar(0.0),
             backend: "ndarray".to_string(),
         };
 
@@ -2127,7 +2193,7 @@ mod tests {
             integrator: IntegratorKind::Heun,
             monitors: vec![],
             stimuli: vec![],
-            nsig: 0.0,
+            nsig: crate::config::NsigConfig::Scalar(0.0),
             backend: "ndarray".to_string(),
         };
 

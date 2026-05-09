@@ -4,6 +4,39 @@ use serde::{Deserialize, Serialize};
 use crate::engine::integrator::IntegratorKind;
 use crate::error::{Result, SimulationError};
 
+/// Polymorphic noise amplitude: scalar or per-variable.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum NsigConfig {
+    Scalar(f32),
+    PerVariable(Vec<f32>),
+}
+
+impl NsigConfig {
+    pub fn to_vec(&self, nvar: usize) -> Vec<f32> {
+        match self {
+            NsigConfig::Scalar(s) => vec![*s; nvar],
+            NsigConfig::PerVariable(v) => {
+                assert_eq!(v.len(), nvar, "nsig per-variable length must match nvar (got {}, expected {})", v.len(), nvar);
+                v.clone()
+            }
+        }
+    }
+
+    pub fn is_zero(&self) -> bool {
+        match self {
+            NsigConfig::Scalar(s) => *s == 0.0,
+            NsigConfig::PerVariable(v) => v.iter().all(|x| *x == 0.0),
+        }
+    }
+}
+
+impl Default for NsigConfig {
+    fn default() -> Self {
+        NsigConfig::Scalar(0.0)
+    }
+}
+
 /// Registry of known neural mass models and their metadata.
 ///
 /// Used for config validation and parameter sizing.
@@ -63,9 +96,9 @@ pub struct SimConfig {
     /// Optional stimulus configuration.
     #[serde(default)]
     pub stimuli: Vec<StimulusConfig>,
-    /// Noise amplitude for stochastic integration.
+    /// Noise amplitude for stochastic integration (scalar or per-variable).
     #[serde(default)]
-    pub nsig: f32,
+    pub nsig: NsigConfig,
     /// Compute backend: "ndarray" (CPU), "wgpu" (GPU/Metal/Vulkan), or "cuda" (NVIDIA).
     /// Overridable by CLI flag; defaults to ndarray.
     #[serde(default = "default_backend")]
@@ -74,11 +107,6 @@ pub struct SimConfig {
 
 fn default_backend() -> String {
     "ndarray".to_string()
-}
-
-impl SimConfig {
-    /// Default nsig value.
-    pub const DEFAULT_NSIG: f32 = 0.0;
 }
 
 /// Network topology: a collection of subnetworks and projections.
@@ -301,6 +329,18 @@ impl SimConfig {
             // nvar/ncvar implicitly match when model is recognised; we just check sizes above.
         }
 
+        // Validate per-variable nsig length matches the first subnetwork's nvar
+        if let NsigConfig::PerVariable(ref v) = self.nsig
+            && !self.network.subnetworks.is_empty()
+            && let Some((first_nvar, _, _)) = lookup_model(self.network.subnetworks[0].model.as_str())
+            && v.len() != first_nvar
+        {
+            return Err(SimulationError::InvalidConfig(format!(
+                "nsig per-variable length {} does not match first subnetwork nvar {}",
+                v.len(), first_nvar
+            )));
+        }
+
         let n_subs = self.network.subnetworks.len();
         for (i, proj) in self.network.projections.iter().enumerate() {
             if proj.src >= n_subs {
@@ -445,7 +485,7 @@ initial_state = [0.0, 0.5, 0.0, 0.5]
         assert_eq!(cfg.network.subnetworks.len(), 1);
         assert_eq!(cfg.network.subnetworks[0].model, "Generic2dOscillator");
         assert_eq!(cfg.integrator, IntegratorKind::Heun);
-        assert_eq!(cfg.nsig, 0.0);
+        assert!(matches!(cfg.nsig, NsigConfig::Scalar(0.0)));
         cfg.validate().unwrap();
     }
 
@@ -466,7 +506,7 @@ initial_state = [0.0, 0.5, 0.0, 0.5]
 "#;
         let cfg: SimConfig = toml::from_str(toml_str).unwrap();
         assert_eq!(cfg.integrator, IntegratorKind::EulerStochastic);
-        assert_eq!(cfg.nsig, 0.5);
+        assert!(matches!(cfg.nsig, NsigConfig::Scalar(0.5)));
         cfg.validate().unwrap();
     }
 
@@ -479,7 +519,7 @@ initial_state = [0.0, 0.5, 0.0, 0.5]
             integrator: IntegratorKind::Heun,
             monitors: vec![],
             stimuli: vec![],
-            nsig: 0.0,
+            nsig: NsigConfig::Scalar(0.0),
             backend: "ndarray".to_string(),
         };
         assert!(cfg.validate().is_err());
@@ -512,7 +552,7 @@ initial_state = [0.0, 0.5, 0.0, 0.5]
                 integrator: IntegratorKind::Heun,
                 monitors: vec![],
                 stimuli: vec![],
-                nsig: 0.0,
+                nsig: NsigConfig::Scalar(0.0),
             backend: "ndarray".to_string(),
             };
             cfg.validate().unwrap_or_else(|e| panic!("{} failed validation: {}", name, e));
@@ -537,12 +577,109 @@ initial_state = [0.0, 0.5, 0.0, 0.5]
             integrator: IntegratorKind::Heun,
             monitors: vec![],
             stimuli: vec![],
-            nsig: 0.0,
+            nsig: NsigConfig::Scalar(0.0),
             backend: "ndarray".to_string(),
         };
         let err = cfg.validate().unwrap_err();
         let msg = format!("{}", err);
         assert!(msg.contains("Unknown model"));
         assert!(msg.contains("Known models"));
+    }
+
+    #[test]
+    fn test_nsig_config_scalar_deserialization() {
+        let toml_str = r#"
+sim_length = 100.0
+dt = 0.1
+nsig = 0.05
+[network]
+[[network.subnetworks]]
+model = "Generic2dOscillator"
+nnodes = 2
+params = [1.0, 0.0, -2.0, -10.0, 0.0, 0.02, 3.0, 1.0, 0.0, 1.0, 1.0, 1.0]
+initial_state = [0.0, 0.5, 0.0, 0.5]
+"#;
+        let cfg: SimConfig = toml::from_str(toml_str).unwrap();
+        assert!(matches!(cfg.nsig, NsigConfig::Scalar(v) if v == 0.05));
+    }
+
+    #[test]
+    fn test_nsig_config_per_variable_deserialization() {
+        let toml_str = r#"
+sim_length = 100.0
+dt = 0.1
+nsig = [0.01, 0.02]
+[network]
+[[network.subnetworks]]
+model = "Generic2dOscillator"
+nnodes = 2
+params = [1.0, 0.0, -2.0, -10.0, 0.0, 0.02, 3.0, 1.0, 0.0, 1.0, 1.0, 1.0]
+initial_state = [0.0, 0.5, 0.0, 0.5]
+"#;
+        let cfg: SimConfig = toml::from_str(toml_str).unwrap();
+        assert!(matches!(cfg.nsig, NsigConfig::PerVariable(ref v) if v.len() == 2 && v[0] == 0.01 && v[1] == 0.02));
+    }
+
+    #[test]
+    fn test_nsig_config_to_vec_scalar() {
+        let nsig = NsigConfig::Scalar(0.05);
+        let v = nsig.to_vec(3);
+        assert_eq!(v, vec![0.05, 0.05, 0.05]);
+    }
+
+    #[test]
+    fn test_nsig_config_to_vec_per_variable() {
+        let nsig = NsigConfig::PerVariable(vec![0.01, 0.02]);
+        let v = nsig.to_vec(2);
+        assert_eq!(v, vec![0.01, 0.02]);
+    }
+
+    #[test]
+    fn test_nsig_config_json_scalar() {
+        let json = r#"{"sim_length":100.0,"dt":0.1,"nsig":0.05,"network":{"subnetworks":[{"model":"Generic2dOscillator","nnodes":2,"nmodes":1,"params":[1.0,0.0,-2.0,-10.0,0.0,0.02,3.0,1.0,0.0,1.0,1.0,1.0],"initial_state":[0.0,0.5,0.0,0.5]}],"projections":[]}}"#;
+        let cfg: SimConfig = serde_json::from_str(json).unwrap();
+        assert!(matches!(cfg.nsig, NsigConfig::Scalar(v) if v == 0.05));
+    }
+
+    #[test]
+    fn test_nsig_config_json_per_variable() {
+        let json = r#"{"sim_length":100.0,"dt":0.1,"nsig":[0.01,0.02],"network":{"subnetworks":[{"model":"Generic2dOscillator","nnodes":2,"nmodes":1,"params":[1.0,0.0,-2.0,-10.0,0.0,0.02,3.0,1.0,0.0,1.0,1.0,1.0],"initial_state":[0.0,0.5,0.0,0.5]}],"projections":[]}}"#;
+        let cfg: SimConfig = serde_json::from_str(json).unwrap();
+        assert!(matches!(cfg.nsig, NsigConfig::PerVariable(ref v) if v.len() == 2 && v[0] == 0.01 && v[1] == 0.02));
+    }
+
+    #[test]
+    fn test_rk4_integrator_deserialization() {
+        let toml_str = r#"
+sim_length = 100.0
+dt = 0.1
+integrator = "rk4"
+[network]
+[[network.subnetworks]]
+model = "Generic2dOscillator"
+nnodes = 2
+params = [1.0, 0.0, -2.0, -10.0, 0.0, 0.02, 3.0, 1.0, 0.0, 1.0, 1.0, 1.0]
+initial_state = [0.0, 0.5, 0.0, 0.5]
+"#;
+        let cfg: SimConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(cfg.integrator, IntegratorKind::Rk4);
+    }
+
+    #[test]
+    fn test_rk4_stochastic_integrator_deserialization() {
+        let toml_str = r#"
+sim_length = 100.0
+dt = 0.1
+integrator = "rk4_stochastic"
+nsig = 0.01
+[network]
+[[network.subnetworks]]
+model = "Generic2dOscillator"
+nnodes = 2
+params = [1.0, 0.0, -2.0, -10.0, 0.0, 0.02, 3.0, 1.0, 0.0, 1.0, 1.0, 1.0]
+initial_state = [0.0, 0.5, 0.0, 0.5]
+"#;
+        let cfg: SimConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(cfg.integrator, IntegratorKind::Rk4Stochastic);
     }
 }
