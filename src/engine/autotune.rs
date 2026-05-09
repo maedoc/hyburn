@@ -80,7 +80,7 @@ pub fn benchmark_coupling(nnodes: usize, strategy: CouplingStrategy, n_steps: us
         &device,
     );
 
-    let coupling_fn = Linear { a: 1.0 };
+    let coupling_fn = Linear { a: 1.0, b: 0.0 };
 
     // Build a sparse CSR equivalent with ~10% density.
     let mut sparse_data = Vec::new();

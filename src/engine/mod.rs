@@ -191,7 +191,7 @@ mod tests {
             &Default::default(),
         );
 
-        let coupling_fn = Linear { a: 1.0 };
+        let coupling_fn = Linear { a: 1.0, b: 0.0 };
 
         let dense_result = dense_coupling(dense_weights, delayed_state.clone(), &coupling_fn);
         let sparse_result = sparse_coupling(

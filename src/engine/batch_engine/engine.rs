@@ -9,6 +9,7 @@ use crate::error::SimulationError;
 
 use super::dfun::{dfun_batch, dfun_batch_multi, clamp_batch, model_prefers_heun, model_param_slice};
 use super::projection::{PrecomputedProjection, ProjectionWeightKind};
+use crate::engine::coupling::CouplingFnConfig;
 
 /// Result of a generic batch sweep.
 #[derive(Debug, Clone)]
@@ -273,14 +274,13 @@ impl<B: Backend> BatchHybridEngine<B> {
             let tgt_nnodes = base_config.network.subnetworks[proj.tgt].nnodes
                 * base_config.network.subnetworks[proj.tgt].nmodes;
 
+            let coupling_fn = CouplingFnConfig::from_name_and_params(
+                &proj.coupling_fn, &proj.coupling_params
+            ).unwrap_or(CouplingFnConfig::Linear { a: 1.0, b: 0.0 });
+
             let weight_kind = match &proj.weights {
                 WeightsConfig::Scalar(w) => {
-                    let effective_weight = if let Some(a) = proj.coupling_params.first() {
-                        *w * *a
-                    } else {
-                        *w
-                    };
-                    ProjectionWeightKind::Scalar { weight: effective_weight }
+                    ProjectionWeightKind::Scalar { weight: *w }
                 }
                 WeightsConfig::Dense(mat) => {
                     let flat: Vec<f32> = mat.iter().flatten().copied().collect();
@@ -288,11 +288,6 @@ impl<B: Backend> BatchHybridEngine<B> {
                         TensorData::new::<f32, Vec<usize>>(flat, vec![tgt_nnodes, src_nnodes]),
                         &device,
                     );
-                    let weights = if let Some(a) = proj.coupling_params.first() {
-                        weights.mul_scalar(*a)
-                    } else {
-                        weights
-                    };
                     let weights_t = weights.swap_dims(0, 1);
                     ProjectionWeightKind::Dense { weights: weights_t }
                 }
@@ -317,11 +312,6 @@ impl<B: Backend> BatchHybridEngine<B> {
                         ),
                         &device,
                     );
-                    let weights = if let Some(a) = proj.coupling_params.first() {
-                        weights.mul_scalar(*a)
-                    } else {
-                        weights
-                    };
                     let weights_t = weights.swap_dims(0, 1);
                     ProjectionWeightKind::Csr { weights: weights_t }
                 }
@@ -352,6 +342,7 @@ impl<B: Backend> BatchHybridEngine<B> {
                 delay: proj.delays.first().copied().unwrap_or(0),
                 cvar_map: cvar_map_parsed,
                 weight_kind,
+                coupling_fn,
             });
         }
 
@@ -526,40 +517,36 @@ impl<B: Backend> BatchHybridEngine<B> {
                     }
                 };
 
-                // Compute coupling based on pre-computed weight kind
+                let coupled_cvar = proj.coupling_fn.apply_3d(cvar_state);
+
                 let coupled = match &proj.weight_kind {
                     ProjectionWeightKind::Scalar { weight } => {
-                        // All-to-all: mean over nodes × weight, expanded for dfun
-                        let mean = cvar_state.mean_dim(1); // [n_sweep, 1, ncvar]
+                        let mean = coupled_cvar.mean_dim(1);
                         mean
                             .mul_scalar(*weight)
                             .expand([n_sweep, src_state.shape().dims[1], ncvar.min(src_model.nvar())])
                     }
                     ProjectionWeightKind::Dense { weights } => {
-                        // Dense weights: batch matmul across sweep dimension.
-                        // weights stored transposed as [src_nnodes, tgt_nnodes].
                         let src_nnodes = weights.shape().dims[0];
                         let tgt_nnodes = weights.shape().dims[1];
-                        let cvar_t = cvar_state.swap_dims(1, 2); // [n_sweep, ncvar, src_nnodes]
+                        let cvar_t = coupled_cvar.swap_dims(1, 2);
                         let weights_3d = weights
                             .clone()
                             .unsqueeze_dim::<3>(0)
                             .expand([n_sweep, src_nnodes, tgt_nnodes]);
-                        let result = cvar_t.matmul(weights_3d); // [n_sweep, ncvar, tgt_nnodes]
-                        result.swap_dims(1, 2) // [n_sweep, tgt_nnodes, ncvar]
+                        let result = cvar_t.matmul(weights_3d);
+                        result.swap_dims(1, 2)
                     }
                     ProjectionWeightKind::Csr { weights } => {
-                        // CSR converted to dense during pre-computation.
-                        // weights stored transposed as [src_nnodes, tgt_nnodes].
                         let src_nnodes = weights.shape().dims[0];
                         let tgt_nnodes = weights.shape().dims[1];
-                        let cvar_t = cvar_state.swap_dims(1, 2); // [n_sweep, ncvar, src_nnodes]
+                        let cvar_t = coupled_cvar.swap_dims(1, 2);
                         let weights_3d = weights
                             .clone()
                             .unsqueeze_dim::<3>(0)
                             .expand([n_sweep, src_nnodes, tgt_nnodes]);
-                        let result = cvar_t.matmul(weights_3d); // [n_sweep, ncvar, tgt_nnodes]
-                        result.swap_dims(1, 2) // [n_sweep, tgt_nnodes, ncvar]
+                        let result = cvar_t.matmul(weights_3d);
+                        result.swap_dims(1, 2)
                     }
                 };
 
@@ -952,15 +939,17 @@ impl<B: Backend> BatchHybridEngine<B> {
                     }
                 };
 
+                let coupled_cvar = proj.coupling_fn.apply_3d(cvar_state);
+
                 let coupled = match &proj.weight_kind {
                     ProjectionWeightKind::Scalar { weight } => {
-                        let mean = cvar_state.mean_dim(1);
+                        let mean = coupled_cvar.mean_dim(1);
                         mean.mul_scalar(*weight)
                             .expand([n_sweep, src_state.shape().dims[1], ncvar.min(src_model.nvar())])
                     }
                     ProjectionWeightKind::Dense { weights } => {
                         let src_nnodes = weights.shape().dims[0];
-                        let cvar_t = cvar_state.swap_dims(1, 2);
+                        let cvar_t = coupled_cvar.swap_dims(1, 2);
                         let weights_3d = weights
                             .clone()
                             .unsqueeze_dim::<3>(0)
@@ -970,7 +959,7 @@ impl<B: Backend> BatchHybridEngine<B> {
                     }
                     ProjectionWeightKind::Csr { weights } => {
                         let src_nnodes = weights.shape().dims[0];
-                        let cvar_t = cvar_state.swap_dims(1, 2);
+                        let cvar_t = coupled_cvar.swap_dims(1, 2);
                         let weights_3d = weights
                             .clone()
                             .unsqueeze_dim::<3>(0)
