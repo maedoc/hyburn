@@ -5,9 +5,10 @@
 
 use burn::prelude::Backend;
 use burn::tensor::Tensor;
+use serde::{Deserialize, Serialize};
 
 /// Serializable / storable coupling-function configuration.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CouplingFnConfig {
     Linear { a: f32, b: f32 },
     Sigmoidal { cmax: f32, midpoint: f32, steepness: f32 },
@@ -16,7 +17,7 @@ pub enum CouplingFnConfig {
     ScaledLinear { a: f32, b: f32 },
     HyperbolicTangent { a: f32, b: f32 },
     SigmoidalJansenRit { a: f32, e0: f32, r: f32, v0: f32 },
-    PreSigmoidal { h: f32, q: f32, g: f32, p: f32, theta: f32 },
+    PreSigmoidal { h: f32, q: f32, g: f32, p: f32, theta: f32, #[serde(default)] dynamic: bool, #[serde(default)] global_t: bool },
 }
 
 impl CouplingFnConfig {
@@ -72,7 +73,9 @@ impl CouplingFnConfig {
                 let g = params.get(2).copied().unwrap_or(1.0);
                 let p = params.get(3).copied().unwrap_or(1.0);
                 let theta = params.get(4).copied().unwrap_or(0.5);
-                Some(CouplingFnConfig::PreSigmoidal { h, q, g, p, theta })
+                let dynamic = params.get(5).copied().unwrap_or(0.0) != 0.0;
+                let global_t = params.get(6).copied().unwrap_or(0.0) != 0.0;
+                Some(CouplingFnConfig::PreSigmoidal { h, q, g, p, theta, dynamic, global_t })
             }
             _ => None,
         }
@@ -92,8 +95,8 @@ impl CouplingFnConfig {
             CouplingFnConfig::SigmoidalJansenRit { a, e0, r, v0 } => {
                 SigmoidalJansenRit { a: *a, e0: *e0, r: *r, v0: *v0 }.apply(x)
             }
-            CouplingFnConfig::PreSigmoidal { h, q, g, p, theta } => {
-                PreSigmoidal { h: *h, q: *q, g: *g, p: *p, theta: *theta }.apply(x)
+            CouplingFnConfig::PreSigmoidal { h, q, g, p, theta, dynamic, global_t } => {
+                PreSigmoidal { h: *h, q: *q, g: *g, p: *p, theta: *theta, dynamic: *dynamic, global_t: *global_t }.apply(x)
             }
         }
     }
@@ -119,8 +122,8 @@ impl CouplingFnConfig {
             CouplingFnConfig::SigmoidalJansenRit { a, e0, r, v0 } => {
                 Box::new(SigmoidalJansenRit { a: *a, e0: *e0, r: *r, v0: *v0 })
             }
-            CouplingFnConfig::PreSigmoidal { h, q, g, p, theta } => {
-                Box::new(PreSigmoidal { h: *h, q: *q, g: *g, p: *p, theta: *theta })
+            CouplingFnConfig::PreSigmoidal { h, q, g, p, theta, dynamic, global_t } => {
+                Box::new(PreSigmoidal { h: *h, q: *q, g: *g, p: *p, theta: *theta, dynamic: *dynamic, global_t: *global_t })
             }
         }
     }
@@ -236,12 +239,24 @@ pub struct PreSigmoidal {
     pub g: f32,
     pub p: f32,
     pub theta: f32,
+    pub dynamic: bool,
+    pub global_t: bool,
 }
 
 impl<B: Backend> CouplingFn<B> for PreSigmoidal {
     fn apply(&self, x: Tensor<B, 2>) -> Tensor<B, 2> {
-        let inner = x.mul_scalar(self.p).add_scalar(-self.theta).mul_scalar(self.g);
-        inner.tanh().add_scalar(self.q).mul_scalar(self.h)
+        let centered = if self.dynamic {
+            if self.global_t {
+                let mean = x.clone().mean().reshape([1, 1]);
+                x - mean
+            } else {
+                let mean = x.clone().mean_dim(0).reshape([1, x.shape().dims[1]]);
+                x - mean
+            }
+        } else {
+            x.add_scalar(-self.theta)
+        };
+        centered.mul_scalar(self.p).mul_scalar(self.g).tanh().add_scalar(self.q).mul_scalar(self.h)
     }
 }
 
@@ -471,7 +486,7 @@ mod tests {
         let g = 1.0f32;
         let p = 1.0f32;
         let theta = 0.5f32;
-        let c = PreSigmoidal { h, q, g, p, theta };
+        let c = PreSigmoidal { h, q, g, p, theta, dynamic: false, global_t: false };
         let x = Tensor::<B, 2>::from_floats(
             TensorData::new::<f32, Vec<usize>>(vec![1.0], vec![1, 1]),
             &Default::default(),
@@ -500,17 +515,110 @@ mod tests {
             &Default::default(),
         );
 
-        let fns: Vec<Box<dyn CouplingFn<B>>> = vec![
-            Box::new(ScaledLinear { a: 1.0, b: 0.0 }),
-            Box::new(HyperbolicTangent { a: 1.0, b: 1.0 }),
-            Box::new(SigmoidalJansenRit { a: 1.0, e0: 0.005, r: 0.56, v0: 6.0 }),
-            Box::new(PreSigmoidal { h: 1.0, q: 0.0, g: 1.0, p: 1.0, theta: 0.0 }),
+        let tol = 1e-5;
+
+        {
+            let c = ScaledLinear { a: 1.0, b: 0.0 };
+            let result = dense_coupling(weights.clone(), delayed_state.clone(), &c);
+            let (data, _) = crate::io::tensor_to_flat_f32(result);
+            assert!((data[0] - 1.0).abs() < tol, "ScaledLinear [0][0]");
+            assert!((data[1] - 2.0).abs() < tol, "ScaledLinear [0][1]");
+            assert!((data[2] - 8.0).abs() < tol, "ScaledLinear [1][0]");
+            assert!((data[3] - 10.0).abs() < tol, "ScaledLinear [1][1]");
+        }
+
+        {
+            let c = HyperbolicTangent { a: 1.0, b: 1.0 };
+            let result = dense_coupling(weights.clone(), delayed_state.clone(), &c);
+            let (data, _) = crate::io::tensor_to_flat_f32(result);
+            assert!((data[0] - 1.0f32.tanh()).abs() < tol, "Tanh [0][0]");
+            assert!((data[1] - 2.0f32.tanh()).abs() < tol, "Tanh [0][1]");
+            assert!((data[2] - (3.0f32.tanh() + 5.0f32.tanh())).abs() < tol, "Tanh [1][0]");
+            assert!((data[3] - (4.0f32.tanh() + 6.0f32.tanh())).abs() < tol, "Tanh [1][1]");
+        }
+
+        {
+            let a = 1.0f32; let e0 = 0.005f32; let r = 0.56f32; let v0 = 6.0f32;
+            let c = SigmoidalJansenRit { a, e0, r, v0 };
+            let result = dense_coupling(weights.clone(), delayed_state.clone(), &c);
+            let (data, _) = crate::io::tensor_to_flat_f32(result);
+            let sjr = |x: f32| -> f32 { (a * 2.0 * e0) / ((-r * (x - v0)).exp() + 1.0) };
+            assert!((data[0] - sjr(1.0)).abs() < tol, "SJR [0][0]");
+            assert!((data[1] - sjr(2.0)).abs() < tol, "SJR [0][1]");
+            assert!((data[2] - (sjr(3.0) + sjr(5.0))).abs() < tol, "SJR [1][0]");
+            assert!((data[3] - (sjr(4.0) + sjr(6.0))).abs() < tol, "SJR [1][1]");
+        }
+
+        {
+            let c = PreSigmoidal { h: 1.0, q: 0.0, g: 1.0, p: 1.0, theta: 0.0, dynamic: false, global_t: false };
+            let result = dense_coupling(weights.clone(), delayed_state.clone(), &c);
+            let (data, _) = crate::io::tensor_to_flat_f32(result);
+            let ps = |x: f32| -> f32 { (1.0f32 * (1.0 * x - 0.0) * 1.0).tanh() * 1.0 + 0.0 };
+            assert!((data[0] - ps(1.0)).abs() < tol, "PreSigmoidal [0][0]");
+            assert!((data[1] - ps(2.0)).abs() < tol, "PreSigmoidal [0][1]");
+            assert!((data[2] - (ps(3.0) + ps(5.0))).abs() < tol, "PreSigmoidal [1][0]");
+            assert!((data[3] - (ps(4.0) + ps(6.0))).abs() < tol, "PreSigmoidal [1][1]");
+        }
+    }
+
+    #[test]
+    fn test_pre_sigmoidal_dynamic() {
+        let c = PreSigmoidal { h: 1.0, q: 0.0, g: 1.0, p: 1.0, theta: 0.0, dynamic: true, global_t: false };
+        let x = Tensor::<B, 2>::from_floats(
+            TensorData::new::<f32, Vec<usize>>(vec![2.0, 4.0, 6.0, 8.0], vec![2, 2]),
+            &Default::default(),
+        );
+        let y = c.apply(x);
+        let (data, _) = crate::io::tensor_to_flat_f32(y);
+        let col0_mean = (2.0f32 + 6.0f32) / 2.0;
+        let col1_mean = (4.0f32 + 8.0f32) / 2.0;
+        let e00 = (1.0 * (2.0 - col0_mean) * 1.0).tanh() * 1.0;
+        let e01 = (1.0 * (4.0 - col1_mean) * 1.0).tanh() * 1.0;
+        let e10 = (1.0 * (6.0 - col0_mean) * 1.0).tanh() * 1.0;
+        let e11 = (1.0 * (8.0 - col1_mean) * 1.0).tanh() * 1.0;
+        assert!((data[0] - e00).abs() < 1e-5, "dynamic [0][0]");
+        assert!((data[1] - e01).abs() < 1e-5, "dynamic [0][1]");
+        assert!((data[2] - e10).abs() < 1e-5, "dynamic [1][0]");
+        assert!((data[3] - e11).abs() < 1e-5, "dynamic [1][1]");
+    }
+
+    #[test]
+    fn test_pre_sigmoidal_dynamic_global() {
+        let c = PreSigmoidal { h: 1.0, q: 0.0, g: 1.0, p: 1.0, theta: 0.0, dynamic: true, global_t: true };
+        let x = Tensor::<B, 2>::from_floats(
+            TensorData::new::<f32, Vec<usize>>(vec![2.0, 4.0, 6.0, 8.0], vec![2, 2]),
+            &Default::default(),
+        );
+        let y = c.apply(x);
+        let (data, _) = crate::io::tensor_to_flat_f32(y);
+        let global_mean = (2.0f32 + 4.0f32 + 6.0f32 + 8.0f32) / 4.0;
+        let e00 = (1.0 * (2.0 - global_mean) * 1.0).tanh() * 1.0;
+        let e01 = (1.0 * (4.0 - global_mean) * 1.0).tanh() * 1.0;
+        let e10 = (1.0 * (6.0 - global_mean) * 1.0).tanh() * 1.0;
+        let e11 = (1.0 * (8.0 - global_mean) * 1.0).tanh() * 1.0;
+        assert!((data[0] - e00).abs() < 1e-5, "global [0][0]");
+        assert!((data[1] - e01).abs() < 1e-5, "global [0][1]");
+        assert!((data[2] - e10).abs() < 1e-5, "global [1][0]");
+        assert!((data[3] - e11).abs() < 1e-5, "global [1][1]");
+    }
+
+    #[test]
+    fn test_coupling_config_serde_roundtrip() {
+        let configs = vec![
+            CouplingFnConfig::Linear { a: 1.0, b: 0.0 },
+            CouplingFnConfig::Sigmoidal { cmax: 1.0, midpoint: 0.0, steepness: 1.0 },
+            CouplingFnConfig::Difference { a: 1.0 },
+            CouplingFnConfig::Kuramoto { a: 1.0 },
+            CouplingFnConfig::ScaledLinear { a: 2.0, b: 1.0 },
+            CouplingFnConfig::HyperbolicTangent { a: 1.0, b: 1.0 },
+            CouplingFnConfig::SigmoidalJansenRit { a: 1.0, e0: 0.005, r: 0.56, v0: 6.0 },
+            CouplingFnConfig::PreSigmoidal { h: 1.0, q: 1.0, g: 1.0, p: 1.0, theta: 0.5, dynamic: false, global_t: false },
+            CouplingFnConfig::PreSigmoidal { h: 1.0, q: 1.0, g: 1.0, p: 1.0, theta: 0.5, dynamic: true, global_t: true },
         ];
-        for coupling_fn in &fns {
-            let result = dense_coupling(weights.clone(), delayed_state.clone(), coupling_fn.as_ref());
-            let (data, shape) = crate::io::tensor_to_flat_f32(result);
-            assert_eq!(shape, vec![2, 2]);
-            assert!(data.iter().all(|x| x.is_finite()), "non-finite result for coupling function");
+        for cfg in &configs {
+            let json = serde_json::to_string(cfg).unwrap();
+            let back: CouplingFnConfig = serde_json::from_str(&json).unwrap();
+            assert_eq!(json, serde_json::to_string(&back).unwrap());
         }
     }
 }
