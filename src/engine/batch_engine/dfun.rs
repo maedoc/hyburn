@@ -869,7 +869,7 @@ pub fn epileptor_dfun_batch<B: Backend>(
     let f2_pos = x2.clone().add_scalar(0.25).mul_scalar(aa);
     let f2 = f2_pos.mask_where(x2_thresh, x2.zeros_like());
     let dy2 = (f2 - y2.clone()).mul_scalar(tt).div_scalar(tau);
-    let dg = (g.neg().mul_scalar(0.1).add(x1)).mul_scalar(-0.01 * tt);
+    let dg = (x1.neg().mul_scalar(0.1).add(g)).mul_scalar(-0.01 * tt);
     Tensor::cat(vec![dx1, dy1, dz, dx2, dy2, dg], 2)
 }
 

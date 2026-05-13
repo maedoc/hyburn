@@ -560,13 +560,14 @@ impl<B: Backend> Monitor<B> for SensorProjectionMonitor {
 // SpatialAverageMonitor
 // ============================================================
 
-/// Spatial average monitor — computes a weighted spatial average of each
-/// state variable over nodes using a mask vector.
+/// Spatial average monitor — computes a weighted spatial average of selected
+/// state variables over nodes using a mask vector.
 ///
-/// For each recorded step and each state variable `v`:
-/// `output[v] = sum_n(mask[n] * state[v,n,:]) / sum_n(mask[n])`
+/// For each recorded step and each variable of interest `vi`:
+/// `output[vi] = sum_n(mask[n] * state[vi,n,:]) / sum_n(mask[n])`
 /// where modes are averaged out.
 ///
+/// If `voi` is empty, all state variables are monitored.
 /// If `mask` is all ones, this reduces to a uniform spatial average.
 pub struct SpatialAverageMonitor {
     /// Weighting mask `[n_regions]`.
@@ -587,44 +588,48 @@ pub struct SpatialAverageMonitor {
     nmodes: usize,
     /// Pre-computed sum of mask weights for normalization.
     mask_sum: f32,
+    /// Indices of variables of interest (empty = all variables).
+    pub voi: Vec<usize>,
 }
 
 impl SpatialAverageMonitor {
-    pub fn new(mask: Vec<f32>, period: usize, nvar: usize, n_regions: usize, nmodes: usize) -> Self {
+    pub fn new(mask: Vec<f32>, voi: Vec<usize>, period: usize, nvar: usize, n_regions: usize, nmodes: usize) -> Self {
         assert!(period > 0, "period must be > 0");
         let mask_sum: f32 = mask.iter().sum();
         assert!(mask_sum.abs() > 1e-12, "spatial mask sum must be non-zero (got {})", mask_sum);
+        let voi = if voi.is_empty() { (0..nvar).collect() } else { voi };
+        let n_voi = voi.len();
         Self {
             mask,
             period,
-            accumulator: vec![0.0; nvar],
+            accumulator: vec![0.0; n_voi],
             accumulator_count: 0,
             data: Vec::new(),
             nvar,
             n_regions,
             nmodes,
             mask_sum,
+            voi,
         }
     }
 
     /// Compute spatial averages from a flat state vector `[nvar * n_regions * nmodes]`.
     fn compute_spatial_average(&self, flat: &[f32]) -> Vec<f32> {
-        let mut avg = vec![0.0f32; self.nvar];
+        let mut avg = vec![0.0f32; self.voi.len()];
         let inv_mask = 1.0 / self.mask_sum;
         let inv_nmodes = 1.0 / self.nmodes as f32;
 
-        #[allow(clippy::needless_range_loop)]
-        for v in 0..self.nvar {
+        for (out_idx, &vi) in self.voi.iter().enumerate() {
             let mut sum = 0.0f32;
             for n in 0..self.n_regions {
                 let mut mode_sum = 0.0f32;
                 for m in 0..self.nmodes {
-                    let idx = v * self.n_regions * self.nmodes + n * self.nmodes + m;
+                    let idx = vi * self.n_regions * self.nmodes + n * self.nmodes + m;
                     mode_sum += flat[idx];
                 }
                 sum += self.mask[n] * mode_sum * inv_nmodes;
             }
-            avg[v] = sum * inv_mask;
+            avg[out_idx] = sum * inv_mask;
         }
         avg
     }
@@ -846,7 +851,7 @@ mod tests {
     fn test_spatial_average_monitor() {
         // Uniform mask (all ones), nvar=2, n_regions=3, nmodes=1
         let mask = vec![1.0, 1.0, 1.0];
-        let mut m = SpatialAverageMonitor::new(mask, 1, 2, 3, 1);
+        let mut m = SpatialAverageMonitor::new(mask, vec![], 1, 2, 3, 1);
 
         // state: var0=[1,2,3], var1=[4,5,6]
         let s = make_state(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3, 1]);
@@ -863,7 +868,7 @@ mod tests {
     fn test_spatial_average_monitor_weighted() {
         // Weighted mask, nvar=1, n_regions=2, nmodes=1
         let mask = vec![2.0, 3.0];
-        let mut m = SpatialAverageMonitor::new(mask, 1, 1, 2, 1);
+        let mut m = SpatialAverageMonitor::new(mask, vec![], 1, 1, 2, 1);
 
         // state: var0=[4, 6]
         let s = make_state(vec![4.0, 6.0], vec![1, 2, 1]);
@@ -879,7 +884,7 @@ mod tests {
     fn test_spatial_average_monitor_with_modes() {
         // Uniform mask, nvar=1, n_regions=2, nmodes=2
         let mask = vec![1.0, 1.0];
-        let mut m = SpatialAverageMonitor::new(mask, 2, 1, 2, 2);
+        let mut m = SpatialAverageMonitor::new(mask, vec![], 2, 1, 2, 2);
 
         // state: [nvar=1, nnodes=2, nmodes=2]
         // var0: node0=[10,20], node1=[30,40]
@@ -896,7 +901,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "spatial mask sum must be non-zero")]
     fn test_spatial_average_monitor_zero_mask_panics() {
-        SpatialAverageMonitor::new(vec![0.0, 0.0], 1, 1, 2, 1);
+        SpatialAverageMonitor::new(vec![0.0, 0.0], vec![], 1, 1, 2, 1);
     }
 
     #[test]
@@ -912,7 +917,7 @@ mod tests {
             Box::new(AfferentCouplingMonitor::new(1, 1)),
             Box::new(ProjectionMonitor::new()),
             Box::new(SensorProjectionMonitor::new(gain, vec![0], 1, 1, 1, 1)),
-            Box::new(SpatialAverageMonitor::new(mask, 1, 1, 1, 1)),
+            Box::new(SpatialAverageMonitor::new(mask, vec![], 1, 1, 1, 1)),
         ];
         let s = make_state(vec![1.0], vec![1, 1, 1]);
         for (step, monitor) in monitors.iter_mut().enumerate() {

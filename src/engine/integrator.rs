@@ -2,8 +2,10 @@
 
 use burn::prelude::Backend;
 use burn::tensor::{Tensor, TensorData};
-use rand::thread_rng;
+use rand::{thread_rng, SeedableRng};
+use rand::rngs::StdRng;
 use rand_distr::{Distribution, Normal};
+use std::cell::RefCell;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
@@ -94,10 +96,31 @@ pub fn heun_step<B: Backend>(
     corrector
 }
 
+thread_local! {
+    /// Optional seeded RNG for deterministic stochastic tests.
+    static SEED_RNG: RefCell<Option<StdRng>> = const { RefCell::new(None) };
+}
+
+/// Set a deterministic seed for stochastic integration noise generation.
+/// Overrides `thread_rng()` in `generate_noise_per_var` for the current thread.
+pub fn set_seed(seed: u64) {
+    SEED_RNG.with(|rng| {
+        *rng.borrow_mut() = Some(StdRng::seed_from_u64(seed));
+    });
+}
+
+/// Clear the deterministic seed and revert to `thread_rng()`.
+pub fn clear_seed() {
+    SEED_RNG.with(|rng| {
+        *rng.borrow_mut() = None;
+    });
+}
+
 /// Generate Gaussian noise tensor with given shape and per-column scales.
 ///
 /// `nsig_slice` has length equal to the number of columns (nvar).
-/// Each column `v` gets noise with scale `nsig_slice[v] * sqrt(dt)`.
+/// Each column `v` gets noise with scale `sqrt(2 * nsig_slice[v]) * sqrt(dt)`,
+/// matching TVB's convention where `nsig` is the noise dispersion coefficient D.
 pub fn generate_noise_per_var<B: Backend>(
     shape: [usize; 2],
     nsig_slice: &[f32],
@@ -106,15 +129,24 @@ pub fn generate_noise_per_var<B: Backend>(
 ) -> Tensor<B, 2> {
     let nrows = shape[0];
     let ncols = shape[1];
-    let n = nrows * ncols;
     let normal = Normal::new(0.0f64, 1.0).unwrap();
     let sqrt_dt = dt.sqrt();
-    let data: Vec<f32> = (0..n)
-        .map(|i| {
-            let col = i % ncols;
-            normal.sample(&mut thread_rng()) as f32 * nsig_slice[col] * sqrt_dt
-        })
-        .collect();
+
+    // Sample in TVB C-order (v outer, row=n*nmodes+m inner) and place into
+    // hyburn's [nrows, ncols] C-order tensor at data[row*ncols + col].
+    let mut data = vec![0.0f32; nrows * ncols];
+    for col in 0..ncols {
+        let scale = (2.0f32 * nsig_slice[col]).sqrt() * sqrt_dt;
+        for row in 0..nrows {
+            let raw: f64 = SEED_RNG.with(|seeding| {
+                match *seeding.borrow_mut() {
+                    Some(ref mut rng) => normal.sample(rng),
+                    None => normal.sample(&mut thread_rng()),
+                }
+            });
+            data[row * ncols + col] = raw as f32 * scale;
+        }
+    }
     Tensor::from_floats(
         TensorData::new::<f32, Vec<usize>>(data, vec![nrows, ncols]),
         device,
@@ -124,7 +156,8 @@ pub fn generate_noise_per_var<B: Backend>(
 /// Stochastic Euler-Maruyama step with per-variable noise.
 ///
 /// `state_new = state + dt * dfun(state, coupling) + Z`
-/// where Z[v] ~ N(0, nsig[v]^2 * dt) per variable column.
+/// where Z[v, n] ~ N(0, 2 * nsig[v] * dt) per variable column v,
+/// matching TVB's convention where `nsig` is the noise dispersion D.
 pub fn euler_stochastic_step<B: Backend>(
     state: Tensor<B, 2>,
     coupling: Tensor<B, 2>,
@@ -144,6 +177,7 @@ pub fn euler_stochastic_step<B: Backend>(
 /// Stochastic Heun step (weak order 1.0) with per-variable noise.
 ///
 /// Uses the same noise for predictor and corrector.
+/// Noise per variable: Z[v, n] ~ N(0, 2 * nsig[v] * dt), matching TVB.
 pub fn heun_stochastic_step<B: Backend>(
     state: Tensor<B, 2>,
     coupling: Tensor<B, 2>,
@@ -191,7 +225,8 @@ pub fn rk4_step<B: Backend>(
 /// Stochastic RK4 step: deterministic RK4 core + per-variable additive noise.
 ///
 /// `state_new = rk4_result + Z`
-/// where Z[v] ~ N(0, nsig[v]^2 * dt) per variable column.
+/// where Z[v, n] ~ N(0, 2 * nsig[v] * dt) per variable column v,
+/// matching TVB's convention where `nsig` is the noise dispersion D.
 pub fn rk4_stochastic_step<B: Backend>(
     state: Tensor<B, 2>,
     coupling: Tensor<B, 2>,
