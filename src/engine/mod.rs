@@ -38,7 +38,7 @@ pub use sweep::parallel_sweep;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::coupling::{Linear, dense_coupling};
+    use crate::engine::coupling::{CouplingFnConfig, dense_coupling};
     use crate::engine::sparse::sparse_coupling;
     use burn::backend::ndarray::NdArray;
     use burn::tensor::{Tensor, TensorData};
@@ -191,15 +191,16 @@ mod tests {
             &Default::default(),
         );
 
-        let coupling_fn = Linear { a: 1.0, b: 0.0 };
+        let coupling_fn = CouplingFnConfig::Linear { a: 1.0, b: 0.0 };
 
-        let dense_result = dense_coupling(dense_weights, delayed_state.clone(), &coupling_fn);
+        let dense_result = dense_coupling(dense_weights, delayed_state.clone(), &coupling_fn, None);
         let sparse_result = sparse_coupling(
             &csr_data,
             &csr_indices,
             &csr_indptr,
             delayed_state,
             &coupling_fn,
+            None,
         );
 
         let (dense_vals, dense_shape) = crate::io::tensor_to_flat_f32(dense_result);

@@ -61,7 +61,7 @@ pub fn select_strategy(nnodes: usize) -> CouplingStrategy {
 pub fn benchmark_coupling(nnodes: usize, strategy: CouplingStrategy, n_steps: usize) -> u128 {
     use burn::backend::ndarray::NdArray;
     use burn::tensor::{Tensor, TensorData};
-    use crate::engine::coupling::{dense_coupling, Linear};
+    use crate::engine::coupling::{dense_coupling, CouplingFnConfig};
     use crate::engine::sparse::sparse_coupling;
 
     type B = NdArray<f32>;
@@ -80,7 +80,7 @@ pub fn benchmark_coupling(nnodes: usize, strategy: CouplingStrategy, n_steps: us
         &device,
     );
 
-    let coupling_fn = Linear { a: 1.0, b: 0.0 };
+    let coupling_cfg = CouplingFnConfig::Linear { a: 1.0, b: 0.0 };
 
     // Build a sparse CSR equivalent with ~10% density.
     let mut sparse_data = Vec::new();
@@ -103,7 +103,7 @@ pub fn benchmark_coupling(nnodes: usize, strategy: CouplingStrategy, n_steps: us
     match strategy {
         CouplingStrategy::Dense => {
             for _ in 0..n_steps {
-                let _ = dense_coupling(weights.clone(), delayed_state.clone(), &coupling_fn);
+                let _ = dense_coupling(weights.clone(), delayed_state.clone(), &coupling_cfg, None);
             }
         }
         CouplingStrategy::SparseCSR => {
@@ -113,7 +113,8 @@ pub fn benchmark_coupling(nnodes: usize, strategy: CouplingStrategy, n_steps: us
                     &sparse_indices,
                     &sparse_indptr,
                     delayed_state.clone(),
-                    &coupling_fn,
+                    &coupling_cfg,
+                    None,
                 );
             }
         }
@@ -125,7 +126,8 @@ pub fn benchmark_coupling(nnodes: usize, strategy: CouplingStrategy, n_steps: us
                     &sparse_indices,
                     &sparse_indptr,
                     delayed_state.clone(),
-                    &coupling_fn,
+                    &coupling_cfg,
+                    None,
                 );
             }
         }

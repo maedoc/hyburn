@@ -1,31 +1,84 @@
-//! Coupling functions and dense coupling kernel.
+//! Coupling functions with pre/post split.
 //!
-//! Ported from the Python `tvb.simulator.hybrid.coupling` module.
-//! Functions: Linear, Sigmoidal, Kuramoto, Difference, ScaledLinear, HyperbolicTangent, etc.
+//! The coupling pipeline:
+//!
+//! ```text
+//! result = post_with_target( W @ pre(x_j), x_i )
+//! ```
+//!
+//! - `pre()` is applied **per source node**, before the weighted sum.
+//! - `W @ pre(x_j)` is the weighted sum over source nodes.
+//! - `post_with_target()` is applied after the weighted sum, with optional
+//!   access to the target node state `x_i`.
+//!
+//! For most coupling functions, `x_i` is not needed and `post_with_target()`
+//! delegates to `post()`. For **Kuramoto** and **Difference** (non-square),
+//! `x_i` is required to compute the classic TVB formulation.
+//!
+//! ## Classification
+//!
+//! | Function            | pre(x_j)                              | post / post_with_target          | needs_x_i |
+//! |--------------------|---------------------------------------|----------------------------------|-----------|
+//! | Linear             | identity                              | a*x + b                          | no        |
+//! | Sigmoidal          | identity                              | cmin+(cmax-cmin)/σ               | no        |
+//! | ScaledLinear       | identity                              | a*(x - b)                        | no        |
+//! | Kuramoto           | [sin(x), cos(x)] (2ch)               | a/N*(cos(x_i)*Σsin - sin(x_i)*Σcos) | yes   |
+//! | HyperbolicTangent  | a*(1+tanh((b*x-midpoint)/sigma))     | identity                         | no        |
+//! | SigmoidalJansenRit | a*(2*e0)/(1+exp(r*(v0-x)))           | identity                         | no        |
+//! | PreSigmoidal       | h*(q+tanh(g*(p*x-θ)))                | identity                         | no        |
+//! | Difference         | identity                              | a*(gx - x_i*rowsums)            | yes*      |
+//!
+//! *Difference with square weight matrices is converted to Linear at construction
+//! time (weight preprocessing), so needs_x_i() is false after construction.
 
 use burn::prelude::Backend;
-use burn::tensor::Tensor;
+use burn::tensor::{Tensor, TensorData};
 use serde::{Deserialize, Serialize};
 
-/// Serializable / storable coupling-function configuration.
+fn default_sigma() -> f32 { 1.0 }
+fn default_cmin() -> f32 { -1.0 }
+fn default_sigmoidal_a() -> f32 { 1.0 }
+fn default_n_src() -> usize { 1 }
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CouplingFnConfig {
     Linear { a: f32, b: f32 },
-    Sigmoidal { cmax: f32, midpoint: f32, steepness: f32 },
-    Difference { a: f32 },
-    Kuramoto { a: f32 },
+    Sigmoidal { #[serde(default = "default_cmin")] cmin: f32, cmax: f32, midpoint: f32, #[serde(default = "default_sigmoidal_a")] a: f32, #[serde(default = "default_sigma")] sigma: f32 },
+    Difference { a: f32, #[serde(skip, default)] rowsums: Option<Vec<f32>> },
+    Kuramoto { a: f32, #[serde(default = "default_n_src")] n_src: usize },
     ScaledLinear { a: f32, b: f32 },
-    HyperbolicTangent { a: f32, b: f32 },
+    HyperbolicTangent { a: f32, b: f32, #[serde(default)] midpoint: f32, #[serde(default = "default_sigma")] sigma: f32 },
     SigmoidalJansenRit { a: f32, e0: f32, r: f32, v0: f32 },
     PreSigmoidal { h: f32, q: f32, g: f32, p: f32, theta: f32, #[serde(default)] dynamic: bool, #[serde(default)] global_t: bool },
 }
 
 impl CouplingFnConfig {
-    /// Minimum source ncvar required by this coupling function.
     pub fn min_src_ncvar(&self) -> usize {
+        1
+    }
+
+    #[inline]
+    pub fn needs_x_i(&self) -> bool {
+        matches!(self, CouplingFnConfig::Kuramoto { .. } | CouplingFnConfig::Difference { rowsums: Some(_), .. })
+    }
+
+    #[inline]
+    pub fn pre_channels(&self) -> usize {
         match self {
-            CouplingFnConfig::Difference { .. } => 2,
+            CouplingFnConfig::Kuramoto { .. } => 2,
             _ => 1,
+        }
+    }
+
+    pub fn set_kuramoto_nsrc(&mut self, n: usize) {
+        if let CouplingFnConfig::Kuramoto { n_src, .. } = self {
+            *n_src = n;
+        }
+    }
+
+    pub fn set_difference_rowsums(&mut self, rs: Vec<f32>) {
+        if let CouplingFnConfig::Difference { rowsums, .. } = self {
+            *rowsums = Some(rs);
         }
     }
 
@@ -37,18 +90,27 @@ impl CouplingFnConfig {
                 Some(CouplingFnConfig::Linear { a, b })
             }
             "Sigmoidal" => {
-                let cmax = params.first().copied().unwrap_or(1.0);
-                let midpoint = params.get(1).copied().unwrap_or(0.0);
-                let steepness = params.get(2).copied().unwrap_or(1.0);
-                Some(CouplingFnConfig::Sigmoidal { cmax, midpoint, steepness })
+                if params.len() >= 5 {
+                    let cmin = params[0];
+                    let cmax = params[1];
+                    let midpoint = params[2];
+                    let a = params[3];
+                    let sigma = params[4];
+                    Some(CouplingFnConfig::Sigmoidal { cmin, cmax, midpoint, a, sigma })
+                } else {
+                    let cmax = params.first().copied().unwrap_or(1.0);
+                    let midpoint = params.get(1).copied().unwrap_or(0.0);
+                    let sigma = params.get(2).copied().unwrap_or(1.0);
+                    Some(CouplingFnConfig::Sigmoidal { cmin: -1.0, cmax, midpoint, a: 1.0, sigma })
+                }
             }
             "Difference" => {
                 let a = params.first().copied().unwrap_or(1.0);
-                Some(CouplingFnConfig::Difference { a })
+                Some(CouplingFnConfig::Difference { a, rowsums: None })
             }
             "Kuramoto" => {
                 let a = params.first().copied().unwrap_or(1.0);
-                Some(CouplingFnConfig::Kuramoto { a })
+                Some(CouplingFnConfig::Kuramoto { a, n_src: 1 })
             }
             "ScaledLinear" => {
                 let a = params.first().copied().unwrap_or(1.0);
@@ -58,7 +120,9 @@ impl CouplingFnConfig {
             "HyperbolicTangent" => {
                 let a = params.first().copied().unwrap_or(1.0);
                 let b = params.get(1).copied().unwrap_or(1.0);
-                Some(CouplingFnConfig::HyperbolicTangent { a, b })
+                let midpoint = params.get(2).copied().unwrap_or(0.0);
+                let sigma = params.get(3).copied().unwrap_or(1.0);
+                Some(CouplingFnConfig::HyperbolicTangent { a, b, midpoint, sigma })
             }
             "SigmoidalJansenRit" => {
                 let a = params.first().copied().unwrap_or(1.0);
@@ -81,204 +145,167 @@ impl CouplingFnConfig {
         }
     }
 
-    /// Apply the configured coupling function to a tensor.
-    pub fn apply<B: Backend>(&self, x: Tensor<B, 2>) -> Tensor<B, 2> {
+    pub fn pre<B: Backend>(&self, x: Tensor<B, 2>) -> Tensor<B, 2> {
         match self {
-            CouplingFnConfig::Linear { a, b } => Linear { a: *a, b: *b }.apply(x),
-            CouplingFnConfig::Sigmoidal { cmax, midpoint, steepness } => {
-                Sigmoidal { cmax: *cmax, midpoint: *midpoint, steepness: *steepness }.apply(x)
+            CouplingFnConfig::Linear { .. } => x,
+            CouplingFnConfig::Sigmoidal { .. } => x,
+            CouplingFnConfig::ScaledLinear { .. } => x,
+            CouplingFnConfig::Difference { .. } => x,
+
+            CouplingFnConfig::Kuramoto { .. } => {
+                let sin_x = x.clone().sin();
+                let cos_x = x.cos();
+                Tensor::cat(vec![sin_x, cos_x], 1)
             }
-            CouplingFnConfig::Difference { a } => Difference { a: *a }.apply(x),
-            CouplingFnConfig::Kuramoto { a } => Kuramoto { a: *a }.apply(x),
-            CouplingFnConfig::ScaledLinear { a, b } => ScaledLinear { a: *a, b: *b }.apply(x),
-            CouplingFnConfig::HyperbolicTangent { a, b } => HyperbolicTangent { a: *a, b: *b }.apply(x),
+            CouplingFnConfig::HyperbolicTangent { a, b, midpoint, sigma } => {
+                let inner = x.mul_scalar(*b).add_scalar(-*midpoint).div_scalar(*sigma);
+                inner.tanh().add_scalar(1.0).mul_scalar(*a)
+            }
             CouplingFnConfig::SigmoidalJansenRit { a, e0, r, v0 } => {
-                SigmoidalJansenRit { a: *a, e0: *e0, r: *r, v0: *v0 }.apply(x)
+                let dims = x.shape().dims;
+                let x0 = x.clone().narrow(1, 0, 1);
+                let x1 = if dims[1] >= 2 {
+                    x.clone().narrow(1, 1, 1)
+                } else {
+                    Tensor::zeros([dims[0], 1], &x.device())
+                };
+                let diff = x0 - x1;
+                let shifted = diff.add_scalar(-*v0).mul_scalar(-*r);
+                let denom = shifted.exp().add_scalar(1.0);
+                denom.recip().mul_scalar(*a * 2.0 * *e0)
             }
             CouplingFnConfig::PreSigmoidal { h, q, g, p, theta, dynamic, global_t } => {
-                PreSigmoidal { h: *h, q: *q, g: *g, p: *p, theta: *theta, dynamic: *dynamic, global_t: *global_t }.apply(x)
+                let inner = if *dynamic {
+                    let px = x.mul_scalar(*p);
+                    if *global_t {
+                        let mean = px.clone().mean().reshape([1, 1]);
+                        px - mean
+                    } else {
+                        let mean = px.clone().mean_dim(0).reshape([1, px.shape().dims[1]]);
+                        px - mean
+                    }
+                } else {
+                    x.mul_scalar(*p).add_scalar(-*theta)
+                };
+                inner.mul_scalar(*g).tanh().add_scalar(*q).mul_scalar(*h)
             }
         }
     }
 
-    pub fn apply_3d<B: Backend>(&self, x: Tensor<B, 3>) -> Tensor<B, 3> {
+    pub fn post<B: Backend>(&self, gx: Tensor<B, 2>) -> Tensor<B, 2> {
+        match self {
+            CouplingFnConfig::Linear { a, b } => gx.mul_scalar(*a).add_scalar(*b),
+            CouplingFnConfig::Sigmoidal { cmin, cmax, midpoint, a, sigma } => {
+                let shifted = gx.add_scalar(-*midpoint).div_scalar(*sigma);
+                let exponent = shifted.mul_scalar(*a).neg();
+                let denom = exponent.exp().add_scalar(1.0);
+                denom.recip().mul_scalar(cmax - cmin).add_scalar(*cmin)
+            }
+            CouplingFnConfig::ScaledLinear { a, b } => gx.add_scalar(-*b).mul_scalar(*a),
+            CouplingFnConfig::Difference { a, rowsums: None } => gx.mul_scalar(*a),
+            CouplingFnConfig::Difference { a, rowsums: Some(_) } => gx.mul_scalar(*a),
+            CouplingFnConfig::Kuramoto { a, n_src } => {
+                let ncvar = gx.shape().dims[1] / 2;
+                let sin_sum = gx.clone().narrow(1, 0, ncvar);
+                sin_sum.mul_scalar(*a / *n_src as f32)
+            }
+            CouplingFnConfig::HyperbolicTangent { .. } => gx,
+            CouplingFnConfig::SigmoidalJansenRit { .. } => gx,
+            CouplingFnConfig::PreSigmoidal { .. } => gx,
+        }
+    }
+
+    /// Apply post-synaptic coupling with optional access to target node state `x_i`.
+    ///
+    /// For Kuramoto: computes `a/N * (cos(x_i) * Σw·sin(x_j) - sin(x_i) * Σw·cos(x_j))`.
+    /// For Difference (non-square, rowsums present): computes `a * (gx - x_i * rowsums)`.
+    /// For all others: delegates to `post(gx)`.
+    pub fn post_with_target<B: Backend>(
+        &self,
+        gx: Tensor<B, 2>,
+        x_i: Option<Tensor<B, 2>>,
+    ) -> Tensor<B, 2> {
+        match self {
+            CouplingFnConfig::Kuramoto { a, n_src } => {
+                let xi = x_i.expect("Kuramoto coupling requires target state (x_i)");
+                let ncvar = xi.shape().dims[1];
+                let sin_sum = gx.clone().narrow(1, 0, ncvar);
+                let cos_sum = gx.narrow(1, ncvar, ncvar);
+                let result = xi.clone().cos().mul(sin_sum) - xi.sin().mul(cos_sum);
+                result.mul_scalar(*a / *n_src as f32)
+            }
+            CouplingFnConfig::Difference { a, rowsums: Some(rs) } => {
+                let xi = x_i.expect("Difference coupling (non-square) requires target state (x_i)");
+                let ntgt = gx.shape().dims[0];
+                let ncvar = gx.shape().dims[1];
+                let dev = gx.device();
+                let rowsums_t = Tensor::<B, 1>::from_floats(
+                    TensorData::new(rs.clone(), vec![ntgt]),
+                    &dev,
+                ).unsqueeze_dim::<2>(1).expand([ntgt, ncvar]);
+                let result = gx - xi.mul(rowsums_t);
+                result.mul_scalar(*a)
+            }
+            _ => self.post(gx),
+        }
+    }
+
+    pub fn pre_3d<B: Backend>(&self, x: Tensor<B, 3>) -> Tensor<B, 3> {
         let dims = x.shape().dims;
         let flat = x.reshape([dims[0] * dims[1], dims[2]]);
-        let applied = self.apply(flat);
-        applied.reshape([dims[0], dims[1], dims[2]])
+        let applied = self.pre(flat);
+        let out_w = applied.shape().dims[1];
+        applied.reshape([dims[0], dims[1], out_w])
     }
 
-    /// Convert the config enum into a boxed trait object for dynamic dispatch.
-    pub fn to_boxed<B: Backend>(&self) -> Box<dyn CouplingFn<B>> {
-        match self {
-            CouplingFnConfig::Linear { a, b } => Box::new(Linear { a: *a, b: *b }),
-            CouplingFnConfig::Sigmoidal { cmax, midpoint, steepness } => {
-                Box::new(Sigmoidal { cmax: *cmax, midpoint: *midpoint, steepness: *steepness })
-            }
-            CouplingFnConfig::Difference { a } => Box::new(Difference { a: *a }),
-            CouplingFnConfig::Kuramoto { a } => Box::new(Kuramoto { a: *a }),
-            CouplingFnConfig::ScaledLinear { a, b } => Box::new(ScaledLinear { a: *a, b: *b }),
-            CouplingFnConfig::HyperbolicTangent { a, b } => Box::new(HyperbolicTangent { a: *a, b: *b }),
-            CouplingFnConfig::SigmoidalJansenRit { a, e0, r, v0 } => {
-                Box::new(SigmoidalJansenRit { a: *a, e0: *e0, r: *r, v0: *v0 })
-            }
-            CouplingFnConfig::PreSigmoidal { h, q, g, p, theta, dynamic, global_t } => {
-                Box::new(PreSigmoidal { h: *h, q: *q, g: *g, p: *p, theta: *theta, dynamic: *dynamic, global_t: *global_t })
-            }
-        }
+    pub fn post_3d<B: Backend>(&self, x: Tensor<B, 3>) -> Tensor<B, 3> {
+        let dims = x.shape().dims;
+        let flat = x.reshape([dims[0] * dims[1], dims[2]]);
+        let applied = self.post(flat);
+        let out_w = applied.shape().dims[1];
+        applied.reshape([dims[0], dims[1], out_w])
     }
-}
 
-/// Apply a coupling function to a weighted sum of delayed source states.
-pub trait CouplingFn<B: Backend> {
-    fn apply(&self, x: Tensor<B, 2>) -> Tensor<B, 2>;
-}
-
-/// Linear coupling: `f(x) = a * x + b`
-pub struct Linear {
-    pub a: f32,
-    pub b: f32,
-}
-
-impl<B: Backend> CouplingFn<B> for Linear {
-    fn apply(&self, x: Tensor<B, 2>) -> Tensor<B, 2> {
-        x.mul_scalar(self.a).add_scalar(self.b)
-    }
-}
-
-/// Sigmoidal coupling:
-/// `f(x) = cmax / (1 + exp(-(x - midpoint) / steepness))`
-pub struct Sigmoidal {
-    pub cmax: f32,
-    pub midpoint: f32,
-    pub steepness: f32,
-}
-
-impl<B: Backend> CouplingFn<B> for Sigmoidal {
-    fn apply(&self, x: Tensor<B, 2>) -> Tensor<B, 2> {
-        let shifted = x.add_scalar(-self.midpoint);
-        let exponent = shifted.div_scalar(self.steepness).neg();
-        let denom = exponent.exp().add_scalar(1.0);
-        let sigmoid = denom.recip();
-        sigmoid.mul_scalar(self.cmax)
-    }
-}
-
-/// Difference coupling: `f(x) = a * (x1 - x2)` — requires `ncvar >= 2`
-pub struct Difference {
-    pub a: f32,
-}
-
-impl<B: Backend> CouplingFn<B> for Difference {
-    fn apply(&self, x: Tensor<B, 2>) -> Tensor<B, 2> {
-        let dim1 = x.shape().dims[1];
-        if dim1 >= 2 {
-            let x1 = x.clone().narrow(1, 0, 1);
-            let x2 = x.clone().narrow(1, 1, 1);
-            (x1 - x2).mul_scalar(self.a)
-        } else {
-            // ncvar < 2: difference is zero, return zeros
-            x.zeros_like()
-        }
-    }
-}
-
-/// Kuramoto coupling (phase): `f(x) = a * sin(x)`
-pub struct Kuramoto {
-    pub a: f32,
-}
-
-impl<B: Backend> CouplingFn<B> for Kuramoto {
-    fn apply(&self, x: Tensor<B, 2>) -> Tensor<B, 2> {
-        x.sin().mul_scalar(self.a)
-    }
-}
-
-/// Scaled linear coupling: `f(x) = a * (x - b)`
-pub struct ScaledLinear {
-    pub a: f32,
-    pub b: f32,
-}
-
-impl<B: Backend> CouplingFn<B> for ScaledLinear {
-    fn apply(&self, x: Tensor<B, 2>) -> Tensor<B, 2> {
-        x.add_scalar(-self.b).mul_scalar(self.a)
-    }
-}
-
-/// Hyperbolic tangent coupling: `f(x) = a * tanh(b * x)`
-pub struct HyperbolicTangent {
-    pub a: f32,
-    pub b: f32,
-}
-
-impl<B: Backend> CouplingFn<B> for HyperbolicTangent {
-    fn apply(&self, x: Tensor<B, 2>) -> Tensor<B, 2> {
-        x.mul_scalar(self.b).tanh().mul_scalar(self.a)
-    }
-}
-
-pub struct SigmoidalJansenRit {
-    pub a: f32,
-    pub e0: f32,
-    pub r: f32,
-    pub v0: f32,
-}
-
-impl<B: Backend> CouplingFn<B> for SigmoidalJansenRit {
-    fn apply(&self, x: Tensor<B, 2>) -> Tensor<B, 2> {
-        let shifted = x.add_scalar(-self.v0).mul_scalar(-self.r);
-        let denom = shifted.exp().add_scalar(1.0);
-        denom.recip().mul_scalar(self.a * 2.0 * self.e0)
-    }
-}
-
-pub struct PreSigmoidal {
-    pub h: f32,
-    pub q: f32,
-    pub g: f32,
-    pub p: f32,
-    pub theta: f32,
-    pub dynamic: bool,
-    pub global_t: bool,
-}
-
-impl<B: Backend> CouplingFn<B> for PreSigmoidal {
-    fn apply(&self, x: Tensor<B, 2>) -> Tensor<B, 2> {
-        let centered = if self.dynamic {
-            if self.global_t {
-                let mean = x.clone().mean().reshape([1, 1]);
-                x - mean
-            } else {
-                let mean = x.clone().mean_dim(0).reshape([1, x.shape().dims[1]]);
-                x - mean
-            }
-        } else {
-            x.add_scalar(-self.theta)
-        };
-        centered.mul_scalar(self.p).mul_scalar(self.g).tanh().add_scalar(self.q).mul_scalar(self.h)
+    pub fn post_with_target_3d<B: Backend>(
+        &self,
+        gx: Tensor<B, 3>,
+        x_i: Option<Tensor<B, 3>>,
+    ) -> Tensor<B, 3> {
+        let dims = gx.shape().dims;
+        let flat_gx = gx.reshape([dims[0] * dims[1], dims[2]]);
+        let flat_xi = x_i.map(|xi| {
+            let xi_dims = xi.shape().dims;
+            xi.reshape([xi_dims[0] * xi_dims[1], xi_dims[2]])
+        });
+        let applied = self.post_with_target(flat_gx, flat_xi);
+        let out_w = applied.shape().dims[1];
+        applied.reshape([dims[0], dims[1], out_w])
     }
 }
 
 /// Dense coupling kernel.
 ///
+/// Pipeline: `post_with_target(W @ pre(x_j), x_i)`
+///
 /// - `weights` has shape `[ntgt, nsrc]`.
 /// - `delayed_state` has shape `[nsrc, ncvar]`.
+/// - `x_i` is `Some([ntgt, ncvar])` for coupling functions that need target state.
 ///
-/// Returns coupling of shape `[ntgt, ncvar]` by applying `coupling_fn`
-/// to each source row and then weighting with `weights` via matrix multiply.
+/// Returns coupling of shape `[ntgt, ncvar]`.
 pub fn dense_coupling<B: Backend>(
     weights: Tensor<B, 2>,
     delayed_state: Tensor<B, 2>,
-    coupling_fn: &dyn CouplingFn<B>,
+    coupling_cfg: &CouplingFnConfig,
+    x_i: Option<Tensor<B, 2>>,
 ) -> Tensor<B, 2> {
     debug_assert!(
         weights.shape().dims[1] == delayed_state.shape().dims[0],
         "dense_coupling: weights cols ({}) must match delayed_state rows ({})",
         weights.shape().dims[1], delayed_state.shape().dims[0]
     );
-    let pre = coupling_fn.apply(delayed_state);
-    weights.matmul(pre)
+    let pre = coupling_cfg.pre(delayed_state);
+    let weighted_sum = weights.matmul(pre);
+    coupling_cfg.post_with_target(weighted_sum, x_i)
 }
 
 /// Read a delayed state slice from a 4-D history buffer.
@@ -305,312 +332,329 @@ mod tests {
     type B = NdArray<f32>;
 
     #[test]
-    fn test_linear() {
-        let c = Linear { a: 2.0, b: 0.0 };
+    fn test_linear_post() {
+        let cfg = CouplingFnConfig::Linear { a: 2.0, b: 0.0 };
+        let dev = Default::default();
         let x = Tensor::<B, 2>::from_floats(
-            TensorData::new::<f32, Vec<usize>>(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2]),
-            &Default::default(),
+            TensorData::new::<f32, Vec<usize>>(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2]), &dev,
         );
-        let y = c.apply(x);
-        let (data, _) = crate::io::tensor_to_flat_f32(y);
+        let pre_result = cfg.pre(x.clone());
+        let (data, _) = crate::io::tensor_to_flat_f32(pre_result);
+        assert_eq!(data, vec![1.0, 2.0, 3.0, 4.0]);
+
+        let post_result = cfg.post(x);
+        let (data, _) = crate::io::tensor_to_flat_f32(post_result);
         assert_eq!(data, vec![2.0, 4.0, 6.0, 8.0]);
     }
 
     #[test]
     fn test_linear_with_offset() {
-        let c = Linear { a: 2.0, b: 1.0 };
-        let x = Tensor::<B, 2>::from_floats(
-            TensorData::new::<f32, Vec<usize>>(vec![1.0], vec![1, 1]),
-            &Default::default(),
+        let cfg = CouplingFnConfig::Linear { a: 2.0, b: 1.0 };
+        let dev = Default::default();
+        let gx = Tensor::<B, 2>::from_floats(
+            TensorData::new::<f32, Vec<usize>>(vec![1.0], vec![1, 1]), &dev,
         );
-        let y = c.apply(x);
-        let (data, _) = crate::io::tensor_to_flat_f32(y);
+        let result = cfg.post(gx);
+        let (data, _) = crate::io::tensor_to_flat_f32(result);
         assert!((data[0] - 3.0).abs() < 1e-6, "expected 3.0, got {}", data[0]);
     }
 
     #[test]
-    fn test_sigmoidal() {
-        let c = Sigmoidal { cmax: 1.0, midpoint: 0.0, steepness: 1.0 };
-        let x = Tensor::<B, 2>::from_floats(
-            TensorData::new::<f32, Vec<usize>>(vec![0.0], vec![1, 1]),
-            &Default::default(),
+    fn test_sigmoidal_5param_post() {
+        let cfg = CouplingFnConfig::Sigmoidal { cmin: -1.0, cmax: 1.0, midpoint: 0.0, a: 1.0, sigma: 1.0 };
+        let dev = Default::default();
+        let gx = Tensor::<B, 2>::from_floats(
+            TensorData::new::<f32, Vec<usize>>(vec![0.0], vec![1, 1]), &dev,
         );
-        let y = c.apply(x);
-        let (data, _) = crate::io::tensor_to_flat_f32(y);
-        assert!((data[0] - 0.5).abs() < 1e-6, "expected 0.5, got {}", data[0]);
+        let result = cfg.post(gx);
+        let (data, _) = crate::io::tensor_to_flat_f32(result);
+        assert!((data[0] - 0.0).abs() < 1e-6, "expected 0.0, got {}", data[0]);
     }
 
     #[test]
-    fn test_difference() {
-        let c = Difference { a: 1.0 };
-        let x = Tensor::<B, 2>::from_floats(
-            TensorData::new::<f32, Vec<usize>>(vec![3.0, 1.0], vec![1, 2]),
-            &Default::default(),
-        );
-        let y = c.apply(x);
-        let (data, _) = crate::io::tensor_to_flat_f32(y);
-        assert!((data[0] - 2.0).abs() < 1e-6, "expected 2.0, got {}", data[0]);
+    fn test_sigmoidal_old_3param_compat() {
+        let cfg = CouplingFnConfig::from_name_and_params("Sigmoidal", &[1.0, 0.0, 2.0]).unwrap();
+        match cfg {
+            CouplingFnConfig::Sigmoidal { cmin, cmax, midpoint, a, sigma } => {
+                assert_eq!(cmin, -1.0);
+                assert_eq!(cmax, 1.0);
+                assert_eq!(midpoint, 0.0);
+                assert_eq!(a, 1.0);
+                assert_eq!(sigma, 2.0);
+            }
+            _ => panic!("expected Sigmoidal"),
+        }
     }
 
     #[test]
-    fn test_kuramoto() {
-        let c = Kuramoto { a: 1.0 };
-        let x = Tensor::<B, 2>::from_floats(
-            TensorData::new::<f32, Vec<usize>>(vec![0.0], vec![1, 1]),
-            &Default::default(),
-        );
-        let y = c.apply(x);
-        let (data, _) = crate::io::tensor_to_flat_f32(y);
-        assert!(data[0].abs() < 1e-6, "expected 0.0, got {}", data[0]);
+    fn test_sigmoidal_new_5param() {
+        let cfg = CouplingFnConfig::from_name_and_params("Sigmoidal", &[-1.0, 1.0, 0.0, 1.0, 230.0]).unwrap();
+        match cfg {
+            CouplingFnConfig::Sigmoidal { cmin, cmax, midpoint, a, sigma } => {
+                assert_eq!(cmin, -1.0);
+                assert_eq!(cmax, 1.0);
+                assert_eq!(midpoint, 0.0);
+                assert_eq!(a, 1.0);
+                assert_eq!(sigma, 230.0);
+            }
+            _ => panic!("expected Sigmoidal"),
+        }
     }
 
     #[test]
-    fn test_scaled_linear() {
-        let c = ScaledLinear { a: 2.0, b: 1.0 };
+    fn test_tanh_pre() {
+        let cfg = CouplingFnConfig::HyperbolicTangent { a: 1.0, b: 1.0, midpoint: 0.0, sigma: 1.0 };
+        let dev = Default::default();
         let x = Tensor::<B, 2>::from_floats(
-            TensorData::new::<f32, Vec<usize>>(vec![2.0, 3.0], vec![1, 2]),
-            &Default::default(),
+            TensorData::new::<f32, Vec<usize>>(vec![0.0], vec![1, 1]), &dev,
         );
-        let y = c.apply(x);
-        let (data, _) = crate::io::tensor_to_flat_f32(y);
-        assert!((data[0] - 2.0).abs() < 1e-6, "expected 2.0, got {}", data[0]);
-        assert!((data[1] - 4.0).abs() < 1e-6, "expected 4.0, got {}", data[1]);
+        let result = cfg.pre(x);
+        let (data, _) = crate::io::tensor_to_flat_f32(result);
+        assert!((data[0] - 1.0).abs() < 1e-6, "expected 1.0, got {}", data[0]);
     }
 
     #[test]
-    fn test_hyperbolic_tangent() {
-        let c = HyperbolicTangent { a: 1.0, b: 1.0 };
+    fn test_kuramoto_pre_two_channel() {
+        let cfg = CouplingFnConfig::Kuramoto { a: 1.0, n_src: 1 };
+        let dev = Default::default();
         let x = Tensor::<B, 2>::from_floats(
-            TensorData::new::<f32, Vec<usize>>(vec![0.0], vec![1, 1]),
-            &Default::default(),
+            TensorData::new::<f32, Vec<usize>>(vec![1.5708], vec![1, 1]), &dev,
         );
-        let y = c.apply(x);
-        let (data, _) = crate::io::tensor_to_flat_f32(y);
-        assert!(data[0].abs() < 1e-6, "expected 0.0, got {}", data[0]);
-
-        let x2 = Tensor::<B, 2>::from_floats(
-            TensorData::new::<f32, Vec<usize>>(vec![1.0], vec![1, 1]),
-            &Default::default(),
-        );
-        let y2 = c.apply(x2);
-        let (data2, _) = crate::io::tensor_to_flat_f32(y2);
-        let expected = 1.0_f32.tanh();
-        assert!((data2[0] - expected).abs() < 1e-5, "expected {}, got {}", expected, data2[0]);
+        let pre_result = cfg.pre(x);
+        let (data, shape) = crate::io::tensor_to_flat_f32(pre_result);
+        assert_eq!(shape, vec![1, 2], "Kuramoto pre should produce 2 channels");
+        assert!((data[0] - 1.0f32).abs() < 1e-4, "sin(pi/2) ≈ 1.0, got {}", data[0]);
+        assert!((data[1]).abs() < 1e-4, "cos(pi/2) ≈ 0.0, got {}", data[1]);
     }
 
     #[test]
-    fn test_dense_coupling() {
-        // weights: [ntgt=2, nsrc=3]
-        let weights = Tensor::<B, 2>::from_floats(
-            TensorData::new::<f32, Vec<usize>>(
-                vec![
-                    1.0, 0.0, 0.0,
-                    0.0, 1.0, 1.0,
-                ],
-                vec![2, 3],
-            ),
-            &Default::default(),
+    fn test_kuramoto_post_with_target() {
+        let cfg = CouplingFnConfig::Kuramoto { a: 1.0, n_src: 2 };
+        let dev = Default::default();
+        // gx from W @ pre: 2 channels [W@sin, W@cos]
+        let gx = Tensor::<B, 2>::from_floats(
+            TensorData::new::<f32, Vec<usize>>(vec![0.5, 0.3], vec![1, 2]), &dev,
         );
-        // delayed_state: [nsrc=3, ncvar=2]
-        let delayed_state = Tensor::<B, 2>::from_floats(
-            TensorData::new::<f32, Vec<usize>>(
-                vec![
-                    1.0, 2.0,
-                    3.0, 4.0,
-                    5.0, 6.0,
-                ],
-                vec![3, 2],
-            ),
-            &Default::default(),
+        // x_i = target state (theta_i)
+        let x_i = Tensor::<B, 2>::from_floats(
+            TensorData::new::<f32, Vec<usize>>(vec![0.0], vec![1, 1]), &dev,
         );
-        let c = Linear { a: 1.0, b: 0.0 };
-        let result = dense_coupling(weights, delayed_state, &c);
+        let result = cfg.post_with_target(gx, Some(x_i));
         let (data, shape) = crate::io::tensor_to_flat_f32(result);
-        assert_eq!(shape, vec![2, 2]);
-        // row 0: [1*1, 1*2] = [1, 2]
-        assert!((data[0] - 1.0).abs() < 1e-6);
-        assert!((data[1] - 2.0).abs() < 1e-6);
-        // row 1: [1*3 + 1*5, 1*4 + 1*6] = [8, 10]
-        assert!((data[2] - 8.0).abs() < 1e-6);
-        assert!((data[3] - 10.0).abs() < 1e-6);
+        assert_eq!(shape, vec![1, 1]);
+        // a/N * (cos(0)*0.5 - sin(0)*0.3) = 1/2 * (1.0*0.5 - 0.0*0.3) = 0.25
+        assert!((data[0] - 0.25).abs() < 1e-5, "expected 0.25, got {}", data[0]);
     }
 
     #[test]
-    fn test_scaled_linear_config() {
-        let cfg = CouplingFnConfig::ScaledLinear { a: 2.0, b: 1.0 };
-        let x = Tensor::<B, 2>::from_floats(
-            TensorData::new::<f32, Vec<usize>>(vec![2.0, 3.0], vec![1, 2]),
-            &Default::default(),
+    fn test_kuramoto_post_with_target_identity() {
+        // When x_i = x_j, sin(x_j - x_i) = 0 for all edges → coupling should be 0
+        let cfg = CouplingFnConfig::Kuramoto { a: 1.0, n_src: 2 };
+        let dev = Default::default();
+        let theta = 1.23f32;
+        // If all source nodes have phase theta, then:
+        // W@sin = rowsum * sin(theta), W@cos = rowsum * cos(theta)
+        let rowsum = 0.5f32;
+        let gx = Tensor::<B, 2>::from_floats(
+            TensorData::new::<f32, Vec<usize>>(
+                vec![rowsum * theta.sin(), rowsum * theta.cos()],
+                vec![1, 2],
+            ), &dev,
         );
-        let y = cfg.apply(x);
-        let (data, _) = crate::io::tensor_to_flat_f32(y);
-        assert!((data[0] - 2.0).abs() < 1e-6, "expected 2.0, got {}", data[0]);
-        assert!((data[1] - 4.0).abs() < 1e-6, "expected 4.0, got {}", data[1]);
-    }
-
-    #[test]
-    fn test_hyperbolic_tangent_config() {
-        let cfg = CouplingFnConfig::HyperbolicTangent { a: 1.0, b: 1.0 };
-        let x = Tensor::<B, 2>::from_floats(
-            TensorData::new::<f32, Vec<usize>>(vec![1.0], vec![1, 1]),
-            &Default::default(),
+        let x_i = Tensor::<B, 2>::from_floats(
+            TensorData::new::<f32, Vec<usize>>(vec![theta], vec![1, 1]), &dev,
         );
-        let y = cfg.apply(x);
-        let (data, _) = crate::io::tensor_to_flat_f32(y);
-        let expected = 1.0_f32.tanh();
-        assert!((data[0] - expected).abs() < 1e-5, "expected {}, got {}", expected, data[0]);
+        let result = cfg.post_with_target(gx, Some(x_i));
+        let (data, _) = crate::io::tensor_to_flat_f32(result);
+        // cos(theta)*rowsum*sin(theta) - sin(theta)*rowsum*cos(theta) = 0
+        assert!(data[0].abs() < 1e-5, "self-coupling should be ~0, got {}", data[0]);
     }
 
     #[test]
-    fn test_sigmoidal_jansen_rit() {
-        let a = 1.0f32;
-        let e0 = 0.005f32;
-        let r = 0.56f32;
-        let v0 = 6.0f32;
-        let c = SigmoidalJansenRit { a, e0, r, v0 };
+    fn test_difference_pre_identity() {
+        let cfg = CouplingFnConfig::Difference { a: 0.1, rowsums: None };
+        let dev = Default::default();
         let x = Tensor::<B, 2>::from_floats(
-            TensorData::new::<f32, Vec<usize>>(vec![6.0], vec![1, 1]),
-            &Default::default(),
+            TensorData::new::<f32, Vec<usize>>(vec![1.0, 2.0], vec![1, 2]), &dev,
         );
-        let y = c.apply(x);
-        let (data, _) = crate::io::tensor_to_flat_f32(y);
-        let shifted = -r * (6.0f32 - v0);
-        let expected = (a * 2.0 * e0) / (shifted.exp() + 1.0);
-        assert!((data[0] - expected).abs() < 1e-6, "expected {}, got {}", expected, data[0]);
+        let pre_result = cfg.pre(x.clone());
+        let (data, _) = crate::io::tensor_to_flat_f32(pre_result);
+        assert_eq!(data, vec![1.0, 2.0]);
     }
 
     #[test]
-    fn test_pre_sigmoidal() {
-        let h = 1.0f32;
-        let q = 1.0f32;
-        let g = 1.0f32;
-        let p = 1.0f32;
-        let theta = 0.5f32;
-        let c = PreSigmoidal { h, q, g, p, theta, dynamic: false, global_t: false };
-        let x = Tensor::<B, 2>::from_floats(
-            TensorData::new::<f32, Vec<usize>>(vec![1.0], vec![1, 1]),
-            &Default::default(),
+    fn test_difference_post_with_target() {
+        let cfg = CouplingFnConfig::Difference { a: 0.1, rowsums: Some(vec![3.0]) };
+        let dev = Default::default();
+        let gx = Tensor::<B, 2>::from_floats(
+            TensorData::new::<f32, Vec<usize>>(vec![5.0], vec![1, 1]), &dev,
         );
-        let y = c.apply(x);
-        let (data, _) = crate::io::tensor_to_flat_f32(y);
-        let inner = g * (p * 1.0f32 - theta);
-        let expected = h * (inner.tanh() + q);
-        assert!((data[0] - expected).abs() < 1e-5, "expected {}, got {}", expected, data[0]);
+        let x_i = Tensor::<B, 2>::from_floats(
+            TensorData::new::<f32, Vec<usize>>(vec![2.0], vec![1, 1]), &dev,
+        );
+        let result = cfg.post_with_target(gx, Some(x_i));
+        let (data, _) = crate::io::tensor_to_flat_f32(result);
+        // a * (gx - x_i * rowsum) = 0.1 * (5.0 - 2.0*3.0) = 0.1 * (-1.0) = -0.1
+        assert!((data[0] - (-0.1)).abs() < 1e-6, "expected -0.1, got {}", data[0]);
     }
 
     #[test]
-    fn test_dense_coupling_with_new_functions() {
+    fn test_dense_coupling_kuramoto_classic() {
+        let dev = Default::default();
+        // 2x2 weight matrix, uniform 0.5
+        let weights = Tensor::<B, 2>::from_floats(
+            TensorData::new::<f32, Vec<usize>>(vec![0.0, 0.5, 0.5, 0.0], vec![2, 2]), &dev,
+        );
+        // source states: theta_0 = 0, theta_1 = pi/2
+        let x_j = Tensor::<B, 2>::from_floats(
+            TensorData::new::<f32, Vec<usize>>(vec![0.0, std::f32::consts::FRAC_PI_2], vec![2, 1]), &dev,
+        );
+        // target states (same nodes, current state): theta_0 = 0, theta_1 = pi/2
+        let x_i = Tensor::<B, 2>::from_floats(
+            TensorData::new::<f32, Vec<usize>>(vec![0.0, std::f32::consts::FRAC_PI_2], vec![2, 1]), &dev,
+        );
+        let cfg = CouplingFnConfig::Kuramoto { a: 1.0, n_src: 2 };
+        let result = dense_coupling(weights, x_j, &cfg, Some(x_i));
+        let (data, shape) = crate::io::tensor_to_flat_f32(result);
+        assert_eq!(shape, vec![2, 1]);
+        // Target 0: x_i=0, W@sin=[0.5*sin(pi/2)]=[0.5], W@cos=[0.5*cos(pi/2)]=[0.0]
+        //   a/N * (cos(0)*0.5 - sin(0)*0.0) = 0.5/2 = 0.25
+        assert!((data[0] - 0.25).abs() < 1e-5, "target 0: expected 0.25, got {}", data[0]);
+        // Target 1: x_i=pi/2, W@sin=[0.5*sin(0)]=[0.0], W@cos=[0.5*cos(0)]=[0.5]
+        //   a/N * (cos(pi/2)*0.0 - sin(pi/2)*0.5) = -0.5/2 = -0.25
+        assert!((data[1] - (-0.25)).abs() < 1e-5, "target 1: expected -0.25, got {}", data[1]);
+    }
+
+    #[test]
+    fn test_dense_coupling_linear_pipeline() {
+        let dev = Default::default();
         let weights = Tensor::<B, 2>::from_floats(
             TensorData::new::<f32, Vec<usize>>(
                 vec![1.0, 0.0, 0.0, 0.0, 1.0, 1.0],
                 vec![2, 3],
-            ),
-            &Default::default(),
+            ), &dev,
         );
         let delayed_state = Tensor::<B, 2>::from_floats(
             TensorData::new::<f32, Vec<usize>>(
                 vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
                 vec![3, 2],
-            ),
-            &Default::default(),
+            ), &dev,
         );
 
+        let cfg = CouplingFnConfig::Linear { a: 2.0, b: 1.0 };
+        let result = dense_coupling(weights, delayed_state, &cfg, None);
+        let (data, shape) = crate::io::tensor_to_flat_f32(result);
+        assert_eq!(shape, vec![2, 2]);
+        assert!((data[0] - 3.0).abs() < 1e-5, "expected 3.0, got {}", data[0]);
+        assert!((data[1] - 5.0).abs() < 1e-5, "expected 5.0, got {}", data[1]);
+        assert!((data[2] - 17.0).abs() < 1e-5, "expected 17.0, got {}", data[2]);
+        assert!((data[3] - 21.0).abs() < 1e-5, "expected 21.0, got {}", data[3]);
+    }
+
+    #[test]
+    fn test_dense_coupling_sigmoidal_pipeline() {
+        let dev = Default::default();
+        let weights = Tensor::<B, 2>::from_floats(
+            TensorData::new::<f32, Vec<usize>>(
+                vec![1.0, 1.0],
+                vec![1, 2],
+            ), &dev,
+        );
+        let delayed_state = Tensor::<B, 2>::from_floats(
+            TensorData::new::<f32, Vec<usize>>(
+                vec![0.5, 1.5],
+                vec![2, 1],
+            ), &dev,
+        );
+
+        let cfg = CouplingFnConfig::Sigmoidal { cmin: 0.0, cmax: 1.0, midpoint: 0.0, a: 1.0, sigma: 1.0 };
+        let result = dense_coupling(weights, delayed_state, &cfg, None);
+        let (data, _) = crate::io::tensor_to_flat_f32(result);
+
+        let expected = 1.0 / (1.0 + (-2.0f32).exp());
+        assert!((data[0] - expected).abs() < 1e-5, "expected {}, got {}", expected, data[0]);
+    }
+
+    #[test]
+    fn test_dense_coupling_tanh_pipeline() {
+        let dev = Default::default();
+        let weights = Tensor::<B, 2>::from_floats(
+            TensorData::new::<f32, Vec<usize>>(
+                vec![1.0, 1.0],
+                vec![1, 2],
+            ), &dev,
+        );
+        let delayed_state = Tensor::<B, 2>::from_floats(
+            TensorData::new::<f32, Vec<usize>>(
+                vec![1.0, -1.0],
+                vec![2, 1],
+            ), &dev,
+        );
+
+        let cfg = CouplingFnConfig::HyperbolicTangent { a: 1.0, b: 1.0, midpoint: 0.0, sigma: 1.0 };
+        let result = dense_coupling(weights, delayed_state, &cfg, None);
+        let (data, _) = crate::io::tensor_to_flat_f32(result);
+
+        let expected = (1.0 + 1.0_f32.tanh()) + (1.0 + (-1.0f32).tanh());
+        assert!((data[0] - expected).abs() < 1e-4, "expected {}, got {}", expected, data[0]);
+    }
+
+    #[test]
+    fn test_presigmoidal_static_p_neq1_theta_neq0() {
+        let cfg = CouplingFnConfig::PreSigmoidal { h: 2.0, q: 1.0, g: 3.0, p: 0.5, theta: 2.0, dynamic: false, global_t: false };
+        let dev = Default::default();
+        let x = Tensor::<B, 2>::from_floats(
+            TensorData::new::<f32, Vec<usize>>(vec![4.0, 5.0, 6.0, 7.0], vec![2, 2]), &dev,
+        );
+        let result = cfg.pre(x);
+        let (data, _) = crate::io::tensor_to_flat_f32(result);
+
+        let expected = |v: f32| -> f32 { 2.0 * (1.0 + (3.0 * (0.5 * v - 2.0)).tanh()) };
         let tol = 1e-5;
+        assert!((data[0] - expected(4.0)).abs() < tol, "x=4: got {}, expected {}", data[0], expected(4.0));
+        assert!((data[1] - expected(5.0)).abs() < tol, "x=5: got {}, expected {}", data[1], expected(5.0));
+        assert!((data[2] - expected(6.0)).abs() < tol, "x=6: got {}, expected {}", data[2], expected(6.0));
+        assert!((data[3] - expected(7.0)).abs() < tol, "x=7: got {}, expected {}", data[3], expected(7.0));
 
-        {
-            let c = ScaledLinear { a: 1.0, b: 0.0 };
-            let result = dense_coupling(weights.clone(), delayed_state.clone(), &c);
-            let (data, _) = crate::io::tensor_to_flat_f32(result);
-            assert!((data[0] - 1.0).abs() < tol, "ScaledLinear [0][0]");
-            assert!((data[1] - 2.0).abs() < tol, "ScaledLinear [0][1]");
-            assert!((data[2] - 8.0).abs() < tol, "ScaledLinear [1][0]");
-            assert!((data[3] - 10.0).abs() < tol, "ScaledLinear [1][1]");
-        }
-
-        {
-            let c = HyperbolicTangent { a: 1.0, b: 1.0 };
-            let result = dense_coupling(weights.clone(), delayed_state.clone(), &c);
-            let (data, _) = crate::io::tensor_to_flat_f32(result);
-            assert!((data[0] - 1.0f32.tanh()).abs() < tol, "Tanh [0][0]");
-            assert!((data[1] - 2.0f32.tanh()).abs() < tol, "Tanh [0][1]");
-            assert!((data[2] - (3.0f32.tanh() + 5.0f32.tanh())).abs() < tol, "Tanh [1][0]");
-            assert!((data[3] - (4.0f32.tanh() + 6.0f32.tanh())).abs() < tol, "Tanh [1][1]");
-        }
-
-        {
-            let a = 1.0f32; let e0 = 0.005f32; let r = 0.56f32; let v0 = 6.0f32;
-            let c = SigmoidalJansenRit { a, e0, r, v0 };
-            let result = dense_coupling(weights.clone(), delayed_state.clone(), &c);
-            let (data, _) = crate::io::tensor_to_flat_f32(result);
-            let sjr = |x: f32| -> f32 { (a * 2.0 * e0) / ((-r * (x - v0)).exp() + 1.0) };
-            assert!((data[0] - sjr(1.0)).abs() < tol, "SJR [0][0]");
-            assert!((data[1] - sjr(2.0)).abs() < tol, "SJR [0][1]");
-            assert!((data[2] - (sjr(3.0) + sjr(5.0))).abs() < tol, "SJR [1][0]");
-            assert!((data[3] - (sjr(4.0) + sjr(6.0))).abs() < tol, "SJR [1][1]");
-        }
-
-        {
-            let c = PreSigmoidal { h: 1.0, q: 0.0, g: 1.0, p: 1.0, theta: 0.0, dynamic: false, global_t: false };
-            let result = dense_coupling(weights.clone(), delayed_state.clone(), &c);
-            let (data, _) = crate::io::tensor_to_flat_f32(result);
-            let ps = |x: f32| -> f32 { (1.0f32 * (1.0 * x - 0.0) * 1.0).tanh() * 1.0 + 0.0 };
-            assert!((data[0] - ps(1.0)).abs() < tol, "PreSigmoidal [0][0]");
-            assert!((data[1] - ps(2.0)).abs() < tol, "PreSigmoidal [0][1]");
-            assert!((data[2] - (ps(3.0) + ps(5.0))).abs() < tol, "PreSigmoidal [1][0]");
-            assert!((data[3] - (ps(4.0) + ps(6.0))).abs() < tol, "PreSigmoidal [1][1]");
-        }
+        assert!((data[0] - 2.0).abs() < 0.01, "x=4: old formula would give ~3.99, correct gives 2.0, got {}", data[0]);
     }
 
     #[test]
-    fn test_pre_sigmoidal_dynamic() {
-        let c = PreSigmoidal { h: 1.0, q: 0.0, g: 1.0, p: 1.0, theta: 0.0, dynamic: true, global_t: false };
-        let x = Tensor::<B, 2>::from_floats(
-            TensorData::new::<f32, Vec<usize>>(vec![2.0, 4.0, 6.0, 8.0], vec![2, 2]),
-            &Default::default(),
-        );
-        let y = c.apply(x);
-        let (data, _) = crate::io::tensor_to_flat_f32(y);
-        let col0_mean = (2.0f32 + 6.0f32) / 2.0;
-        let col1_mean = (4.0f32 + 8.0f32) / 2.0;
-        let e00 = (1.0 * (2.0 - col0_mean) * 1.0).tanh() * 1.0;
-        let e01 = (1.0 * (4.0 - col1_mean) * 1.0).tanh() * 1.0;
-        let e10 = (1.0 * (6.0 - col0_mean) * 1.0).tanh() * 1.0;
-        let e11 = (1.0 * (8.0 - col1_mean) * 1.0).tanh() * 1.0;
-        assert!((data[0] - e00).abs() < 1e-5, "dynamic [0][0]");
-        assert!((data[1] - e01).abs() < 1e-5, "dynamic [0][1]");
-        assert!((data[2] - e10).abs() < 1e-5, "dynamic [1][0]");
-        assert!((data[3] - e11).abs() < 1e-5, "dynamic [1][1]");
+    fn test_needs_x_i() {
+        assert!(!CouplingFnConfig::Linear { a: 1.0, b: 0.0 }.needs_x_i());
+        assert!(!CouplingFnConfig::Sigmoidal { cmin: -1.0, cmax: 1.0, midpoint: 0.0, a: 1.0, sigma: 1.0 }.needs_x_i());
+        assert!(!CouplingFnConfig::Difference { a: 0.1, rowsums: None }.needs_x_i());
+        assert!(CouplingFnConfig::Difference { a: 0.1, rowsums: Some(vec![1.0]) }.needs_x_i());
+        assert!(CouplingFnConfig::Kuramoto { a: 1.0, n_src: 4 }.needs_x_i());
+        assert!(!CouplingFnConfig::HyperbolicTangent { a: 1.0, b: 1.0, midpoint: 0.0, sigma: 1.0 }.needs_x_i());
     }
 
     #[test]
-    fn test_pre_sigmoidal_dynamic_global() {
-        let c = PreSigmoidal { h: 1.0, q: 0.0, g: 1.0, p: 1.0, theta: 0.0, dynamic: true, global_t: true };
-        let x = Tensor::<B, 2>::from_floats(
-            TensorData::new::<f32, Vec<usize>>(vec![2.0, 4.0, 6.0, 8.0], vec![2, 2]),
-            &Default::default(),
-        );
-        let y = c.apply(x);
-        let (data, _) = crate::io::tensor_to_flat_f32(y);
-        let global_mean = (2.0f32 + 4.0f32 + 6.0f32 + 8.0f32) / 4.0;
-        let e00 = (1.0 * (2.0 - global_mean) * 1.0).tanh() * 1.0;
-        let e01 = (1.0 * (4.0 - global_mean) * 1.0).tanh() * 1.0;
-        let e10 = (1.0 * (6.0 - global_mean) * 1.0).tanh() * 1.0;
-        let e11 = (1.0 * (8.0 - global_mean) * 1.0).tanh() * 1.0;
-        assert!((data[0] - e00).abs() < 1e-5, "global [0][0]");
-        assert!((data[1] - e01).abs() < 1e-5, "global [0][1]");
-        assert!((data[2] - e10).abs() < 1e-5, "global [1][0]");
-        assert!((data[3] - e11).abs() < 1e-5, "global [1][1]");
+    fn test_pre_channels() {
+        assert_eq!(CouplingFnConfig::Linear { a: 1.0, b: 0.0 }.pre_channels(), 1);
+        assert_eq!(CouplingFnConfig::Kuramoto { a: 1.0, n_src: 4 }.pre_channels(), 2);
+        assert_eq!(CouplingFnConfig::Difference { a: 0.1, rowsums: None }.pre_channels(), 1);
+    }
+
+    #[test]
+    fn test_set_kuramoto_nsrc() {
+        let mut cfg = CouplingFnConfig::Kuramoto { a: 1.0, n_src: 1 };
+        cfg.set_kuramoto_nsrc(4);
+        match cfg {
+            CouplingFnConfig::Kuramoto { n_src, .. } => assert_eq!(n_src, 4),
+            _ => panic!("expected Kuramoto"),
+        }
     }
 
     #[test]
     fn test_coupling_config_serde_roundtrip() {
         let configs = vec![
             CouplingFnConfig::Linear { a: 1.0, b: 0.0 },
-            CouplingFnConfig::Sigmoidal { cmax: 1.0, midpoint: 0.0, steepness: 1.0 },
-            CouplingFnConfig::Difference { a: 1.0 },
-            CouplingFnConfig::Kuramoto { a: 1.0 },
+            CouplingFnConfig::Sigmoidal { cmin: -1.0, cmax: 1.0, midpoint: 0.0, a: 1.0, sigma: 1.0 },
+            CouplingFnConfig::Difference { a: 1.0, rowsums: None },
+            CouplingFnConfig::Kuramoto { a: 1.0, n_src: 1 },
             CouplingFnConfig::ScaledLinear { a: 2.0, b: 1.0 },
-            CouplingFnConfig::HyperbolicTangent { a: 1.0, b: 1.0 },
+            CouplingFnConfig::HyperbolicTangent { a: 1.0, b: 1.0, midpoint: 0.0, sigma: 1.0 },
             CouplingFnConfig::SigmoidalJansenRit { a: 1.0, e0: 0.005, r: 0.56, v0: 6.0 },
             CouplingFnConfig::PreSigmoidal { h: 1.0, q: 1.0, g: 1.0, p: 1.0, theta: 0.5, dynamic: false, global_t: false },
             CouplingFnConfig::PreSigmoidal { h: 1.0, q: 1.0, g: 1.0, p: 1.0, theta: 0.5, dynamic: true, global_t: true },
@@ -619,6 +663,84 @@ mod tests {
             let json = serde_json::to_string(cfg).unwrap();
             let back: CouplingFnConfig = serde_json::from_str(&json).unwrap();
             assert_eq!(json, serde_json::to_string(&back).unwrap());
+        }
+    }
+}
+
+
+#[cfg(test)]
+mod serde_compat_tests {
+    use super::*;
+
+    #[test]
+    fn test_tanh_old_2param_deserialize() {
+        let old_json = r#"{"HyperbolicTangent":{"a":1.0,"b":1.0}}"#;
+        let cfg: CouplingFnConfig = serde_json::from_str(old_json).unwrap();
+        match cfg {
+            CouplingFnConfig::HyperbolicTangent { a, b, midpoint, sigma } => {
+                assert_eq!(a, 1.0);
+                assert_eq!(b, 1.0);
+                assert_eq!(midpoint, 0.0);
+                assert_eq!(sigma, 1.0);
+            }
+            _ => panic!("expected HyperbolicTangent"),
+        }
+    }
+
+    #[test]
+    fn test_sigmoidal_old_3param_deserialize() {
+        let cfg = CouplingFnConfig::from_name_and_params("Sigmoidal", &[1.0, 0.0, 2.0]).unwrap();
+        match cfg {
+            CouplingFnConfig::Sigmoidal { cmin, cmax, midpoint, a, sigma } => {
+                assert_eq!(cmin, -1.0);
+                assert_eq!(cmax, 1.0);
+                assert_eq!(midpoint, 0.0);
+                assert_eq!(a, 1.0);
+                assert_eq!(sigma, 2.0);
+            }
+            _ => panic!("expected Sigmoidal"),
+        }
+    }
+
+    #[test]
+    fn test_sigmoidal_json_with_defaults() {
+        let json = r#"{"Sigmoidal":{"cmax":1.0,"midpoint":0.0}}"#;
+        let cfg: CouplingFnConfig = serde_json::from_str(json).unwrap();
+        match cfg {
+            CouplingFnConfig::Sigmoidal { cmin, cmax, midpoint, a, sigma } => {
+                assert_eq!(cmin, -1.0);
+                assert_eq!(cmax, 1.0);
+                assert_eq!(midpoint, 0.0);
+                assert_eq!(a, 1.0);
+                assert_eq!(sigma, 1.0);
+            }
+            _ => panic!("expected Sigmoidal"),
+        }
+    }
+
+    #[test]
+    fn test_kuramoto_old_json_deserialize() {
+        let old_json = r#"{"Kuramoto":{"a":1.0}}"#;
+        let cfg: CouplingFnConfig = serde_json::from_str(old_json).unwrap();
+        match cfg {
+            CouplingFnConfig::Kuramoto { a, n_src } => {
+                assert_eq!(a, 1.0);
+                assert_eq!(n_src, 1); // default
+            }
+            _ => panic!("expected Kuramoto"),
+        }
+    }
+
+    #[test]
+    fn test_difference_old_json_deserialize() {
+        let old_json = r#"{"Difference":{"a":0.1}}"#;
+        let cfg: CouplingFnConfig = serde_json::from_str(old_json).unwrap();
+        match cfg {
+            CouplingFnConfig::Difference { a, rowsums } => {
+                assert_eq!(a, 0.1);
+                assert!(rowsums.is_none()); // rowsums skipped in serde
+            }
+            _ => panic!("expected Difference"),
         }
     }
 }

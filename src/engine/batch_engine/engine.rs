@@ -274,11 +274,12 @@ impl<B: Backend> BatchHybridEngine<B> {
             let tgt_nnodes = base_config.network.subnetworks[proj.tgt].nnodes
                 * base_config.network.subnetworks[proj.tgt].nmodes;
 
-            let coupling_fn = CouplingFnConfig::from_name_and_params(
+            let mut coupling_fn = CouplingFnConfig::from_name_and_params(
                 &proj.coupling_fn, &proj.coupling_params
             ).unwrap_or(CouplingFnConfig::Linear { a: 1.0, b: 0.0 });
+            coupling_fn.set_kuramoto_nsrc(src_nnodes);
 
-            let weight_kind = match &proj.weights {
+            let mut weight_kind = match &proj.weights {
                 WeightsConfig::Scalar(w) => {
                     ProjectionWeightKind::Scalar { weight: *w }
                 }
@@ -316,6 +317,39 @@ impl<B: Backend> BatchHybridEngine<B> {
                     ProjectionWeightKind::Csr { weights: weights_t }
                 }
             };
+
+            // Difference coupling: preprocess weights for square matrices,
+            // or store rowsums for non-square matrices
+            if let CouplingFnConfig::Difference { a, .. } = coupling_fn {
+                match &mut weight_kind {
+                    ProjectionWeightKind::Scalar { weight } => {
+                        *weight = 0.0;
+                        coupling_fn = CouplingFnConfig::Linear { a, b: 0.0 };
+                    }
+                    ProjectionWeightKind::Dense { weights } | ProjectionWeightKind::Csr { weights } => {
+                        let weights_nt = weights.clone().swap_dims(0, 1);
+                        let (flat, shape) = crate::io::tensor_to_flat_f32(weights_nt);
+                        if tgt_nnodes == src_nnodes {
+                            let mut modified = flat;
+                            for i in 0..tgt_nnodes {
+                                let row_sum: f32 = (0..src_nnodes).map(|j| modified[i * src_nnodes + j]).sum();
+                                modified[i * src_nnodes + i] -= row_sum;
+                            }
+                            let new_weights = Tensor::<B, 2>::from_floats(
+                                TensorData::new::<f32, Vec<usize>>(modified, shape), &device,
+                            );
+                            *weights = new_weights.swap_dims(0, 1);
+                            coupling_fn = CouplingFnConfig::Linear { a, b: 0.0 };
+                        } else {
+                            let mut rowsums = vec![0.0f32; tgt_nnodes];
+                            for i in 0..tgt_nnodes {
+                                rowsums[i] = (0..src_nnodes).map(|j| flat[i * src_nnodes + j]).sum();
+                            }
+                            coupling_fn.set_difference_rowsums(rowsums);
+                        }
+                    }
+                }
+            }
 
             let cvar_map_parsed = parse_cvar_map(&proj.cvar_map);
             // Validate cvar_map against model ncvar
@@ -517,19 +551,28 @@ impl<B: Backend> BatchHybridEngine<B> {
                     }
                 };
 
-                let coupled_cvar = proj.coupling_fn.apply_3d(cvar_state);
+                let tgt_ncvar_extract = self.models[tgt_idx].ncvar();
+                let x_i: Option<Tensor<B, 3>> = if proj.coupling_fn.needs_x_i() {
+                    Some(self.states[tgt_idx].clone().narrow(2, 0, tgt_ncvar_extract))
+                } else {
+                    None
+                };
 
-                let coupled = match &proj.weight_kind {
+                let pre_cvar = proj.coupling_fn.pre_3d(cvar_state);
+                let pre_ncvar = pre_cvar.shape().dims[2];
+
+                let weighted_sum = match &proj.weight_kind {
                     ProjectionWeightKind::Scalar { weight } => {
-                        let mean = coupled_cvar.mean_dim(1);
+                        let mean = pre_cvar.mean_dim(1);
+                        let tgt_nnodes_i = self.states[tgt_idx].shape().dims[1];
                         mean
                             .mul_scalar(*weight)
-                            .expand([n_sweep, src_state.shape().dims[1], ncvar.min(src_model.nvar())])
+                            .expand([n_sweep, tgt_nnodes_i, pre_ncvar])
                     }
                     ProjectionWeightKind::Dense { weights } => {
                         let src_nnodes = weights.shape().dims[0];
                         let tgt_nnodes = weights.shape().dims[1];
-                        let cvar_t = coupled_cvar.swap_dims(1, 2);
+                        let cvar_t = pre_cvar.swap_dims(1, 2);
                         let weights_3d = weights
                             .clone()
                             .unsqueeze_dim::<3>(0)
@@ -540,7 +583,7 @@ impl<B: Backend> BatchHybridEngine<B> {
                     ProjectionWeightKind::Csr { weights } => {
                         let src_nnodes = weights.shape().dims[0];
                         let tgt_nnodes = weights.shape().dims[1];
-                        let cvar_t = coupled_cvar.swap_dims(1, 2);
+                        let cvar_t = pre_cvar.swap_dims(1, 2);
                         let weights_3d = weights
                             .clone()
                             .unsqueeze_dim::<3>(0)
@@ -549,6 +592,7 @@ impl<B: Backend> BatchHybridEngine<B> {
                         result.swap_dims(1, 2)
                     }
                 };
+                let coupled = proj.coupling_fn.post_with_target_3d(weighted_sum, x_i);
 
                 // Remap cvars to target using cvar_map
                 let tgt_model = &self.models[tgt_idx];
@@ -939,17 +983,26 @@ impl<B: Backend> BatchHybridEngine<B> {
                     }
                 };
 
-                let coupled_cvar = proj.coupling_fn.apply_3d(cvar_state);
+                let tgt_ncvar_extract = engine.models[tgt_idx].ncvar();
+                let x_i: Option<Tensor<B, 3>> = if proj.coupling_fn.needs_x_i() {
+                    Some(engine.states[tgt_idx].clone().narrow(2, 0, tgt_ncvar_extract))
+                } else {
+                    None
+                };
 
-                let coupled = match &proj.weight_kind {
+                let pre_cvar = proj.coupling_fn.pre_3d(cvar_state);
+                let pre_ncvar = pre_cvar.shape().dims[2];
+
+                let weighted_sum = match &proj.weight_kind {
                     ProjectionWeightKind::Scalar { weight } => {
-                        let mean = coupled_cvar.mean_dim(1);
+                        let mean = pre_cvar.mean_dim(1);
+                        let tgt_nnodes_i = engine.states[tgt_idx].shape().dims[1];
                         mean.mul_scalar(*weight)
-                            .expand([n_sweep, src_state.shape().dims[1], ncvar.min(src_model.nvar())])
+                            .expand([n_sweep, tgt_nnodes_i, pre_ncvar])
                     }
                     ProjectionWeightKind::Dense { weights } => {
                         let src_nnodes = weights.shape().dims[0];
-                        let cvar_t = coupled_cvar.swap_dims(1, 2);
+                        let cvar_t = pre_cvar.swap_dims(1, 2);
                         let weights_3d = weights
                             .clone()
                             .unsqueeze_dim::<3>(0)
@@ -959,7 +1012,7 @@ impl<B: Backend> BatchHybridEngine<B> {
                     }
                     ProjectionWeightKind::Csr { weights } => {
                         let src_nnodes = weights.shape().dims[0];
-                        let cvar_t = coupled_cvar.swap_dims(1, 2);
+                        let cvar_t = pre_cvar.swap_dims(1, 2);
                         let weights_3d = weights
                             .clone()
                             .unsqueeze_dim::<3>(0)
@@ -968,6 +1021,7 @@ impl<B: Backend> BatchHybridEngine<B> {
                         result.swap_dims(1, 2)
                     }
                 };
+                let coupled = proj.coupling_fn.post_with_target_3d(weighted_sum, x_i);
 
                 let tgt_model = &engine.models[tgt_idx];
                 let tgt_ncvar = tgt_model.ncvar();

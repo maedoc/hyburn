@@ -1,12 +1,12 @@
 //! Sparse CSR coupling kernel.
 //!
 //! Implements CPU-side CSR matrix–vector multiply and a sparse coupling
-//! function that applies a coupling function to delayed source states and
-//! then multiplies by a CSR weight matrix.
+//! function using the correct pre/post pipeline:
+//! `post(W @ pre(x))`
 
 use burn::prelude::Backend;
 use burn::tensor::{Tensor, TensorData};
-use crate::engine::coupling::CouplingFn;
+use crate::engine::coupling::CouplingFnConfig;
 
 /// CSR matrix–vector multiply on CPU.
 ///
@@ -48,52 +48,58 @@ pub fn sparse_csr_matvec(
 
 /// Sparse coupling via CSR matrix multiplication on CPU.
 ///
+/// Pipeline: `post_with_target(W @ pre(x_j), x_i)`
+///
 /// # Arguments
 /// - `csr_data`    – non-zero values, length `nnz`.
 /// - `csr_indices` – column indices, length `nnz`.
 /// - `csr_indptr`  – row pointers, length `ntgt + 1`.
 /// - `delayed_state` – dense tensor of shape `[nsrc, ncvar]`.
-/// - `coupling_fn` – coupling function to apply to each source row.
+/// - `coupling_cfg` – coupling function config with pre/post split.
+/// - `x_i` – optional target state `[ntgt, ncvar]` for x_i-dependent functions.
 ///
-/// Returns a tensor of shape `[ntgt, ncvar]`.
+/// Returns a tensor of shape `[ntgt, ncvar]` (or `[ntgt, ncvar_out]` for multi-channel).
 pub fn sparse_coupling<B: Backend>(
     csr_data: &[f32],
     csr_indices: &[usize],
     csr_indptr: &[usize],
     delayed_state: Tensor<B, 2>,
-    coupling_fn: &dyn CouplingFn<B>,
+    coupling_cfg: &CouplingFnConfig,
+    x_i: Option<Tensor<B, 2>>,
 ) -> Tensor<B, 2> {
-    let pre = coupling_fn.apply(delayed_state);
-    let device = pre.device();
+    let device = delayed_state.device();
 
-    let (pre_data, pre_shape) = crate::io::tensor_to_flat_f32(pre);
+    // Step 1: Apply pre() per-edge (per source node)
+    let pre_result = coupling_cfg.pre(delayed_state);
+    let (pre_data, pre_shape) = crate::io::tensor_to_flat_f32(pre_result);
     let nsrc = pre_shape[0];
-    let ncvar = pre_shape[1];
+    let pre_ncvar = pre_shape[1];
     let ntgt = csr_indptr.len().saturating_sub(1);
 
-    let mut result_data = vec![0.0_f32; ntgt * ncvar];
-
-    // For each coupling variable column, extract the column vector and
-    // perform a CSR matvec.
-    for k in 0..ncvar {
-        let x: Vec<f32> = (0..nsrc).map(|i| pre_data[i * ncvar + k]).collect();
+    // Step 2: Weighted sum via CSR matvec (one matvec per pre output channel)
+    let mut weighted_sum_data = vec![0.0_f32; ntgt * pre_ncvar];
+    for k in 0..pre_ncvar {
+        let x: Vec<f32> = (0..nsrc).map(|i| pre_data[i * pre_ncvar + k]).collect();
         let mut y = vec![0.0_f32; ntgt];
         sparse_csr_matvec(csr_data, csr_indices, csr_indptr, &x, &mut y);
         for i in 0..ntgt {
-            result_data[i * ncvar + k] = y[i];
+            weighted_sum_data[i * pre_ncvar + k] = y[i];
         }
     }
 
-    Tensor::from_floats(
-        TensorData::new::<f32, Vec<usize>>(result_data, vec![ntgt, ncvar]),
+    let weighted_sum = Tensor::<B, 2>::from_floats(
+        TensorData::new::<f32, Vec<usize>>(weighted_sum_data, vec![ntgt, pre_ncvar]),
         &device,
-    )
+    );
+
+    // Step 3: Apply post_with_target() to the weighted sum
+    coupling_cfg.post_with_target(weighted_sum, x_i)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::coupling::{dense_coupling, Linear};
+    use crate::engine::coupling::{dense_coupling, CouplingFnConfig};
     use burn::backend::ndarray::NdArray;
     use burn::tensor::TensorData;
 
@@ -166,15 +172,16 @@ mod tests {
             &Default::default(),
         );
 
-        let coupling_fn = Linear { a: 1.0, b: 0.0 };
+        let coupling_fn = CouplingFnConfig::Linear { a: 1.0, b: 0.0 };
 
-        let dense_result = dense_coupling(dense_weights, delayed_state.clone(), &coupling_fn);
+        let dense_result = dense_coupling(dense_weights, delayed_state.clone(), &coupling_fn, None);
         let sparse_result = sparse_coupling(
             &csr_data,
             &csr_indices,
             &csr_indptr,
             delayed_state,
             &coupling_fn,
+            None,
         );
 
         let (dense_data, dense_shape) = crate::io::tensor_to_flat_f32(dense_result);
@@ -225,16 +232,17 @@ mod tests {
             &Default::default(),
         );
 
-        // Linear with a=2.0.
-        let coupling_fn = Linear { a: 2.0, b: 0.0 };
+        // Linear with a=2.0, b=0.
+        let coupling_fn = CouplingFnConfig::Linear { a: 2.0, b: 0.0 };
 
-        let dense_result = dense_coupling(dense_weights, delayed_state.clone(), &coupling_fn);
+        let dense_result = dense_coupling(dense_weights, delayed_state.clone(), &coupling_fn, None);
         let sparse_result = sparse_coupling(
             &csr_data,
             &csr_indices,
             &csr_indptr,
             delayed_state,
             &coupling_fn,
+            None,
         );
 
         let (dense_data, _) = crate::io::tensor_to_flat_f32(dense_result);

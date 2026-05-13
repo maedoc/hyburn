@@ -10,6 +10,7 @@ use crate::error::{Result, SimulationError};
 use super::construction::{HybridEngine, IntegratorKind, CKPT_MAGIC, CKPT_VERSION};
 use super::monitor::Monitor;
 use super::sparse::sparse_coupling;
+use super::coupling::{CouplingFnConfig, dense_coupling};
 
 impl<B: Backend> HybridEngine<B> {
 
@@ -88,9 +89,8 @@ impl<B: Backend> HybridEngine<B> {
         for proj in &self.projections {
             let src_state = &self.states[proj.src];
             let src_sub = &self.subnetworks[proj.src];
-            let _tgt_sub = &self.subnetworks[proj.tgt];
-
-            let coupling_fn = proj.coupling_cfg.to_boxed(); // box once per projection, not per mode
+            let tgt_sub = &self.subnetworks[proj.tgt];
+            let needs_xi = proj.coupling_cfg.needs_x_i();
 
             let mut mode_couplings = Vec::new();
             for mode in 0..src_sub.nmodes {
@@ -98,6 +98,17 @@ impl<B: Backend> HybridEngine<B> {
                 let ncvar_extract = src_sub.ncvar.min(src_sub.nvar);
                 let cvars = mode_state.narrow(0, 0, ncvar_extract); // [ncvar, nnodes]
                 let cvars_t = cvars.permute([1, 0]); // [nnodes, ncvar]
+
+                // Extract target cvars (x_i) when coupling function needs them
+                let x_i: Option<Tensor<B, 2>> = if needs_xi {
+                    let tgt_state = &self.states[proj.tgt];
+                    let tgt_ncvar_extract = tgt_sub.ncvar.min(tgt_sub.nvar);
+                    let tgt_mode_state = tgt_state.clone().narrow(2, mode, 1).squeeze::<2>(2);
+                    let tgt_cvars = tgt_mode_state.narrow(0, 0, tgt_ncvar_extract);
+                    Some(tgt_cvars.permute([1, 0])) // [ntgt_nodes, ncvar]
+                } else {
+                    None
+                };
 
                 let mode_coup = if proj.is_sparse {
                     let csr_data = proj.csr_data.as_ref()
@@ -113,7 +124,12 @@ impl<B: Backend> HybridEngine<B> {
 
                     if has_per_edge_delays {
                         let ntgt = csr_indptr.len() - 1;
-                        let mut result = vec![0.0f32; ntgt * ncvar_extract];
+                        let pre_ncvar = if let CouplingFnConfig::Kuramoto { .. } = proj.coupling_cfg {
+                            ncvar_extract * 2
+                        } else {
+                            ncvar_extract
+                        };
+                        let mut weighted_sum = vec![0.0f32; ntgt * pre_ncvar];
                         let h = &self.histories[proj.src];
                         let horizon = h.shape().dims[3];
 
@@ -140,19 +156,22 @@ impl<B: Backend> HybridEngine<B> {
                                     }
                                 }; // src_row is [1, ncvar] — a GPU tensor, no CPU copy
 
-                                let post_edge = proj.coupling_cfg.apply(src_row);
-                                let post_data = crate::io::tensor_to_flat_f32(post_edge).0;
+                                // Apply pre() per-edge (before weighting)
+                                let pre_result = proj.coupling_cfg.pre(src_row);
+                                let pre_data = crate::io::tensor_to_flat_f32(pre_result).0;
 
-                                for cvar in 0..ncvar_extract {
-                                    result[tgt * ncvar_extract + cvar] += weight * post_data[cvar];
+                                for cvar in 0..pre_ncvar {
+                                    weighted_sum[tgt * pre_ncvar + cvar] += weight * pre_data[cvar];
                                 }
                             }
                         }
 
-                        Tensor::<B, 2>::from_floats(
-                            TensorData::new::<f32, Vec<usize>>(result, vec![ntgt, ncvar_extract]),
+                        // Apply post_with_target() to the weighted sum
+                        let weighted_sum_tensor = Tensor::<B, 2>::from_floats(
+                            TensorData::new::<f32, Vec<usize>>(weighted_sum, vec![ntgt, pre_ncvar]),
                             &self.device,
-                        )
+                        );
+                        proj.coupling_cfg.post_with_target(weighted_sum_tensor, x_i)
                     } else {
                         let delayed_cvars = if let Some(delay) = proj.delays.first().copied() {
                             if delay == 0 || self.step == 0 {
@@ -180,7 +199,8 @@ impl<B: Backend> HybridEngine<B> {
                             csr_indices,
                             csr_indptr,
                             delayed_cvars,
-                            coupling_fn.as_ref(),
+                            &proj.coupling_cfg,
+                            x_i,
                         )
                     }
                 } else {
@@ -205,8 +225,8 @@ impl<B: Backend> HybridEngine<B> {
                         cvars_t.clone()
                     };
 
-                    let post = proj.coupling_cfg.apply(delayed_cvars);
-                    proj.weights.clone().matmul(post)
+                    // Pipeline: pre(x_j) → W @ pre(x_j) → post_with_target(gx, x_i)
+                    dense_coupling(proj.weights.clone(), delayed_cvars, &proj.coupling_cfg, x_i)
                 };
                 mode_couplings.push(mode_coup);
             }

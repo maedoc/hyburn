@@ -1,0 +1,58 @@
+{
+  "Linear_b0": {
+    "diff_fixed_vs_classic": 0.0,
+    "diff_hyburn_vs_classic": 0.0,
+    "diff_hyburn_vs_fixed": 0.0,
+    "agree_fixed_classic": true,
+    "agree_hyburn_classic": true,
+    "agree_hyburn_fixed": true
+  },
+  "Linear_b0.1": {
+    "diff_fixed_vs_classic": 0.0,
+    "diff_hyburn_vs_classic": 0.0,
+    "diff_hyburn_vs_fixed": 0.0,
+    "agree_fixed_classic": true,
+    "agree_hyburn_classic": true,
+    "agree_hyburn_fixed": true
+  },
+  "Sigmoidal": {
+    "diff_fixed_vs_classic": 0.0,
+    "diff_hyburn_vs_classic": 0.0,
+    "diff_hyburn_vs_fixed": 0.0,
+    "agree_fixed_classic": true,
+    "agree_hyburn_classic": true,
+    "agree_hyburn_fixed": true
+  },
+  "Tanh": {
+    "diff_fixed_vs_classic": 0.0,
+    "diff_hyburn_vs_classic": 0.0,
+    "diff_hyburn_vs_fixed": 0.0,
+    "agree_fixed_classic": true,
+    "agree_hyburn_classic": true,
+    "agree_hyburn_fixed": true
+  },
+  "Kuramoto": {
+    "diff_fixed_vs_classic": 0.3036683201789856,
+    "diff_hyburn_vs_classic": 7.450580596923828e-09,
+    "diff_hyburn_vs_fixed": 0.3036683201789856,
+    "agree_fixed_classic": false,
+    "agree_hyburn_classic": true,
+    "agree_hyburn_fixed": false
+  },
+  "Difference": {
+    "diff_fixed_vs_classic": 0.18950554728507996,
+    "diff_hyburn_vs_classic": 1.4901161193847656e-08,
+    "diff_hyburn_vs_fixed": 0.18950554728507996,
+    "agree_fixed_classic": false,
+    "agree_hyburn_classic": true,
+    "agree_hyburn_fixed": false
+  },
+  "SigmoidalJansenRit": {
+    "diff_fixed_vs_classic": 0.0,
+    "diff_hyburn_vs_classic": 0.0,
+    "diff_hyburn_vs_fixed": 0.0,
+    "agree_fixed_classic": true,
+    "agree_hyburn_classic": true,
+    "agree_hyburn_fixed": true
+  }
+}

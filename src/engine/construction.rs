@@ -630,7 +630,7 @@ progress: None,
                 }
             };
 
-            let coupling_cfg = match CouplingFnConfig::from_name_and_params(
+            let mut coupling_cfg = match CouplingFnConfig::from_name_and_params(
                 &proj_cfg.coupling_fn, &proj_cfg.coupling_params
             ) {
                 Some(cfg) => cfg,
@@ -639,6 +639,47 @@ progress: None,
                         format!("Unknown coupling function: {}", proj_cfg.coupling_fn)
                     ));
                 }
+            };
+
+            let src_nnodes = subnetworks[proj_cfg.src].nnodes;
+            let tgt_nnodes = subnetworks[proj_cfg.tgt].nnodes;
+
+            // Set Kuramoto n_src for /N normalization
+            coupling_cfg.set_kuramoto_nsrc(src_nnodes);
+
+            // Difference coupling: preprocess weights for square matrices,
+            // or store rowsums for non-square matrices
+            let (weights_tensor, coupling_cfg) = if let CouplingFnConfig::Difference { a, .. } = coupling_cfg {
+                if tgt_nnodes == src_nnodes {
+                    // Square: modify diagonal to encode x_j - x_i
+                    // W'[i,i] = W[i,i] - Σ_j W[i,j]  →  W'@x = Σ w_ij*(x_j - x_i)
+                    let (mut w_flat, w_shape) = crate::io::tensor_to_flat_f32(weights_tensor.clone());
+                    for i in 0..tgt_nnodes {
+                        let row_sum: f32 = (0..src_nnodes)
+                            .map(|j| w_flat[i * src_nnodes + j])
+                            .sum();
+                        w_flat[i * src_nnodes + i] -= row_sum;
+                    }
+                    let new_weights = Tensor::<B, 2>::from_floats(
+                        TensorData::new::<f32, Vec<usize>>(w_flat, w_shape),
+                        &device,
+                    );
+                    (new_weights, CouplingFnConfig::Linear { a, b: 0.0 })
+                } else {
+                    // Non-square: store rowsums for x_i-based computation
+                    let (w_flat, _) = crate::io::tensor_to_flat_f32(weights_tensor.clone());
+                    let mut rowsums = vec![0.0f32; tgt_nnodes];
+                    for i in 0..tgt_nnodes {
+                        rowsums[i] = (0..src_nnodes)
+                            .map(|j| w_flat[i * src_nnodes + j])
+                            .sum();
+                    }
+                    let mut diff_cfg = CouplingFnConfig::Difference { a, rowsums: None };
+                    diff_cfg.set_difference_rowsums(rowsums);
+                    (weights_tensor, diff_cfg)
+                }
+            } else {
+                (weights_tensor, coupling_cfg)
             };
 
             let cvar_map_parsed = parse_cvar_map(&proj_cfg.cvar_map);
@@ -795,8 +836,10 @@ progress: None,
                     .map(|p_ms| (p_ms / cfg.dt).max(1.0).round() as usize)
                     .unwrap_or(1);
 
+                let voi = mon_cfg.voi.clone().unwrap_or_default();
+
                 let sm = crate::engine::monitor::SpatialAverageMonitor::new(
-                    mask, period_steps, nvar, nnodes, nmodes,
+                    mask, voi, period_steps, nvar, nnodes, nmodes,
                 );
                 spatial_monitors.push(sm);
                 spatial_monitor_targets.push(target);
