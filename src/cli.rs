@@ -41,6 +41,10 @@ pub enum Command {
         /// Path to sweep configuration TOML for parameter sweep mode.
         #[arg(long)]
         sweep: Option<String>,
+
+        /// Noise generation mode: "reproducible" (CPU, matches TVB) or "fast" (GPU-side).
+        #[arg(long, default_value = "reproducible")]
+        noise_mode: String,
     },
 
     /// Run benchmarks.
@@ -189,6 +193,7 @@ impl Cli {
                 resume,
                 progress,
                 sweep,
+                noise_mode,
             } => run_cmd(
                 &config,
                 &output,
@@ -197,6 +202,7 @@ impl Cli {
                 resume.as_deref(),
                 progress,
                 sweep.as_deref(),
+                noise_mode.as_str(),
             ),
             Command::Benchmark { .. } => {
                 anyhow::bail!(
@@ -775,6 +781,7 @@ fn train_maf_with_data_and_log_wrap(
     train_maf_with_data_and_log(maf_config, flat_params, features, n_epochs, batch_size)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_cmd(
     config: &str,
     output: &str,
@@ -783,10 +790,13 @@ fn run_cmd(
     resume: Option<&str>,
     progress_interval: usize,
     sweep: Option<&str>,
+    noise_mode: &str,
 ) -> anyhow::Result<()> {
     use crate::config::SimConfig;
 
     let cfg = SimConfig::from_file(config)?;
+    let noise_mode: crate::engine::integrator::NoiseMode = noise_mode.parse()
+        .map_err(|e: String| anyhow::anyhow!("{}", e))?;
 
     if let Some(sweep_path) = sweep {
         run_sweep(
@@ -797,9 +807,10 @@ fn run_cmd(
             resume,
             progress_interval,
             sweep_path,
+            noise_mode,
         )
     } else {
-        dispatch_backend(backend, cfg, output, checkpoint, resume, progress_interval)
+        dispatch_backend(backend, cfg, output, checkpoint, resume, progress_interval, noise_mode)
     }
 }
 
@@ -810,6 +821,7 @@ fn dispatch_backend(
     checkpoint: Option<&str>,
     resume: Option<&str>,
     progress_interval: usize,
+    noise_mode: crate::engine::integrator::NoiseMode,
 ) -> anyhow::Result<()> {
     let backend = select_backend(backend);
     match backend {
@@ -822,6 +834,7 @@ fn dispatch_backend(
                 resume,
                 progress_interval,
                 Default::default(),
+                noise_mode,
             )
         }
         #[cfg(feature = "wgpu")]
@@ -835,6 +848,7 @@ fn dispatch_backend(
                 resume,
                 progress_interval,
                 device,
+                noise_mode,
             )
         }
         #[cfg(feature = "cuda")]
@@ -848,12 +862,14 @@ fn dispatch_backend(
                 resume,
                 progress_interval,
                 device,
+                noise_mode,
             )
         }
         _ => unreachable!("select_backend normalises to a known backend"),
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_sweep(
     cfg: crate::config::SimConfig,
     output: &str,
@@ -862,6 +878,7 @@ fn run_sweep(
     _resume: Option<&str>,
     _progress_interval: usize,
     sweep_path: &str,
+    _noise_mode: crate::engine::integrator::NoiseMode,
 ) -> anyhow::Result<()> {
     use crate::config::SweepConfig;
 
@@ -1026,6 +1043,7 @@ fn run_simulation<B: burn::prelude::Backend>(
     resume: Option<&str>,
     progress_interval: usize,
     device: B::Device,
+    noise_mode: crate::engine::integrator::NoiseMode,
 ) -> anyhow::Result<()> {
     use crate::engine::{HybridEngine, ProgressReporter};
     use crate::io::{tensor_to_flat_f32, write_npy_f32};
@@ -1034,6 +1052,7 @@ fn run_simulation<B: burn::prelude::Backend>(
     std::fs::create_dir_all(output)?;
 
     let mut engine = HybridEngine::<B>::from_config(cfg.clone(), device)?;
+    engine.noise_mode = noise_mode;
 
     if let Some(ckpt) = resume {
         log::info!("Resuming from checkpoint: {}", ckpt);
@@ -1179,6 +1198,7 @@ fn sbi_report_cmd(
 // ---------------------------------------------------------------------------
 
 /// Find the hyburn-config binary next to the current executable, or in PATH.
+#[allow(clippy::collapsible_if)]
 fn find_tool_binary(name: &str) -> anyhow::Result<std::path::PathBuf> {
     // First: check same directory as current executable
     if let Ok(exe) = std::env::current_exe() {
