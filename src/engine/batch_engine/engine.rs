@@ -125,6 +125,8 @@ pub struct BatchHybridEngine<B: Backend> {
     pub hybrid_integrator: bool,
     /// Noise amplitude per variable for stochastic integration.
     pub nsig_vec: Vec<f32>,
+    /// Noise generation mode.
+    pub noise_mode: crate::engine::integrator::NoiseMode,
     /// Device for tensor allocation.
     pub device: B::Device,
     /// Pre-computed projections with cached weight tensors.
@@ -290,7 +292,8 @@ impl<B: Backend> BatchHybridEngine<B> {
                         &device,
                     );
                     let weights_t = weights.swap_dims(0, 1);
-                    ProjectionWeightKind::Dense { weights: weights_t }
+                    let weights_3d = weights_t.clone().unsqueeze_dim::<3>(0).expand([n_sweep, src_nnodes, tgt_nnodes]);
+                    ProjectionWeightKind::Dense { weights: weights_t, weights_3d: Some(weights_3d) }
                 }
                 WeightsConfig::Csr { data, indices, indptr } => {
                     let csr_indices_usize: Vec<usize> =
@@ -314,7 +317,8 @@ impl<B: Backend> BatchHybridEngine<B> {
                         &device,
                     );
                     let weights_t = weights.swap_dims(0, 1);
-                    ProjectionWeightKind::Csr { weights: weights_t }
+                    let weights_3d = weights_t.clone().unsqueeze_dim::<3>(0).expand([n_sweep, src_nnodes, tgt_nnodes]);
+                    ProjectionWeightKind::Csr { weights: weights_t, weights_3d: Some(weights_3d) }
                 }
             };
 
@@ -326,7 +330,7 @@ impl<B: Backend> BatchHybridEngine<B> {
                         *weight = 0.0;
                         coupling_fn = CouplingFnConfig::Linear { a, b: 0.0 };
                     }
-                    ProjectionWeightKind::Dense { weights } | ProjectionWeightKind::Csr { weights } => {
+                    ProjectionWeightKind::Dense { weights, .. } | ProjectionWeightKind::Csr { weights, .. } => {
                         let weights_nt = weights.clone().swap_dims(0, 1);
                         let (flat, shape) = crate::io::tensor_to_flat_f32(weights_nt);
                         if tgt_nnodes == src_nnodes {
@@ -338,14 +342,26 @@ impl<B: Backend> BatchHybridEngine<B> {
                             let new_weights = Tensor::<B, 2>::from_floats(
                                 TensorData::new::<f32, Vec<usize>>(modified, shape), &device,
                             );
-                            *weights = new_weights.swap_dims(0, 1);
+                            let new_weights_t = new_weights.swap_dims(0, 1);
+                            let new_weights_3d = new_weights_t.clone().unsqueeze_dim::<3>(0).expand([n_sweep, src_nnodes, tgt_nnodes]);
+                            match &mut weight_kind {
+                                ProjectionWeightKind::Dense { weights, weights_3d } => {
+                                    *weights = new_weights_t;
+                                    *weights_3d = Some(new_weights_3d);
+                                }
+                                ProjectionWeightKind::Csr { weights, weights_3d } => {
+                                    *weights = new_weights_t;
+                                    *weights_3d = Some(new_weights_3d);
+                                }
+                                _ => unreachable!(),
+                            }
                             coupling_fn = CouplingFnConfig::Linear { a, b: 0.0 };
                         } else {
                             let mut rowsums = vec![0.0f32; tgt_nnodes];
                             for i in 0..tgt_nnodes {
                                 rowsums[i] = (0..src_nnodes).map(|j| flat[i * src_nnodes + j]).sum();
                             }
-                            coupling_fn.set_difference_rowsums(rowsums);
+                            coupling_fn.set_difference_rowsums(rowsums.clone());
                         }
                     }
                 }
@@ -370,6 +386,18 @@ impl<B: Backend> BatchHybridEngine<B> {
                 }
             }
 
+            let rowsums_tensor = if let CouplingFnConfig::Difference { rowsums: Some(ref rs), .. } = coupling_fn {
+                let tgt_ncvar = models[proj.tgt].ncvar();
+                Some(
+                    Tensor::<B, 1>::from_floats(
+                        TensorData::new(rs.clone(), vec![tgt_nnodes]),
+                        &device,
+                    ).unsqueeze_dim::<2>(1).expand([tgt_nnodes, tgt_ncvar])
+                )
+            } else {
+                None
+            };
+
             precomputed_projections.push(PrecomputedProjection {
                 src: proj.src,
                 tgt: proj.tgt,
@@ -377,6 +405,7 @@ impl<B: Backend> BatchHybridEngine<B> {
                 cvar_map: cvar_map_parsed,
                 weight_kind,
                 coupling_fn,
+                rowsums_tensor,
             });
         }
 
@@ -426,6 +455,7 @@ impl<B: Backend> BatchHybridEngine<B> {
             integrator: base_config.integrator,
             hybrid_integrator: false,
             nsig_vec,
+            noise_mode: crate::engine::integrator::NoiseMode::default(),
             device,
             precomputed_projections,
             bold_monitors,
@@ -569,32 +599,32 @@ impl<B: Backend> BatchHybridEngine<B> {
                             .mul_scalar(*weight)
                             .expand([n_sweep, tgt_nnodes_i, pre_ncvar])
                     }
-                    ProjectionWeightKind::Dense { weights } => {
-                        let src_nnodes = weights.shape().dims[0];
-                        let tgt_nnodes = weights.shape().dims[1];
+                    ProjectionWeightKind::Dense { weights_3d, .. } => {
+                        let w3d = weights_3d.as_ref().expect("weights_3d should be pre-computed");
                         let cvar_t = pre_cvar.swap_dims(1, 2);
-                        let weights_3d = weights
-                            .clone()
-                            .unsqueeze_dim::<3>(0)
-                            .expand([n_sweep, src_nnodes, tgt_nnodes]);
-                        let result = cvar_t.matmul(weights_3d);
+                        let result = cvar_t.matmul(w3d.clone());
                         result.swap_dims(1, 2)
                     }
-                    ProjectionWeightKind::Csr { weights } => {
-                        let src_nnodes = weights.shape().dims[0];
-                        let tgt_nnodes = weights.shape().dims[1];
+                    ProjectionWeightKind::Csr { weights_3d, .. } => {
+                        let w3d = weights_3d.as_ref().expect("weights_3d should be pre-computed");
                         let cvar_t = pre_cvar.swap_dims(1, 2);
-                        let weights_3d = weights
-                            .clone()
-                            .unsqueeze_dim::<3>(0)
-                            .expand([n_sweep, src_nnodes, tgt_nnodes]);
-                        let result = cvar_t.matmul(weights_3d);
+                        let result = cvar_t.matmul(w3d.clone());
                         result.swap_dims(1, 2)
                     }
                 };
-                let coupled = proj.coupling_fn.post_with_target_3d(weighted_sum, x_i);
+                let coupled = if let Some(ref rowsums_t) = proj.rowsums_tensor {
+                    if let CouplingFnConfig::Difference { a, .. } = proj.coupling_fn {
+                        let xi_3d = x_i.expect("Difference coupling requires target state (x_i)");
+                        let rowsums_expanded = rowsums_t.clone().unsqueeze_dim::<3>(0).expand([n_sweep, rowsums_t.shape().dims[0], rowsums_t.shape().dims[1]]);
+                        let diff = weighted_sum - xi_3d.mul(rowsums_expanded);
+                        diff.mul_scalar(a)
+                    } else {
+                        proj.coupling_fn.post_with_target_3d(weighted_sum, x_i)
+                    }
+                } else {
+                    proj.coupling_fn.post_with_target_3d(weighted_sum, x_i)
+                };
 
-                // Remap cvars to target using cvar_map
                 let tgt_model = &self.models[tgt_idx];
                 let tgt_ncvar = tgt_model.ncvar();
                 let remapped = if tgt_ncvar == ncvar
@@ -689,7 +719,7 @@ impl<B: Backend> BatchHybridEngine<B> {
                         IntegratorKind::EulerStochastic => {
                             let dims = self.states[i].shape().dims;
                             let noise = crate::engine::integrator::generate_noise_per_var::<B>(
-                                [dims[1], dims[2]], &self.nsig_vec, self.dt, &self.device,
+                                [dims[1], dims[2]], &self.nsig_vec, self.dt, &self.device, self.noise_mode,
                             );
                             // Expand noise from [nnodes*nmodes, nvar] to [n_sweep, nnodes*nmodes, nvar]
                             let noise_3d = noise.unsqueeze_dim::<3>(0).expand([dims[0], dims[1], dims[2]]);
@@ -698,7 +728,7 @@ impl<B: Backend> BatchHybridEngine<B> {
                         IntegratorKind::HeunStochastic => {
                             let dims = self.states[i].shape().dims;
                             let noise = crate::engine::integrator::generate_noise_per_var::<B>(
-                                [dims[1], dims[2]], &self.nsig_vec, self.dt, &self.device,
+                                [dims[1], dims[2]], &self.nsig_vec, self.dt, &self.device, self.noise_mode,
                             );
                             let noise_3d = noise.unsqueeze_dim::<3>(0).expand([dims[0], dims[1], dims[2]]);
                             let mut predictor = self.states[i].clone() + deriv.clone().mul_scalar(self.dt) + noise_3d.clone();
@@ -720,7 +750,7 @@ impl<B: Backend> BatchHybridEngine<B> {
                             let deterministic = self.states[i].clone() + (k1 + k2.mul_scalar(2.0) + k3.mul_scalar(2.0) + k4).mul_scalar(self.dt / 6.0);
                             let dims = deterministic.shape().dims;
                             let noise = crate::engine::integrator::generate_noise_per_var::<B>(
-                                [dims[1], dims[2]], &self.nsig_vec, self.dt, &self.device,
+                                [dims[1], dims[2]], &self.nsig_vec, self.dt, &self.device, self.noise_mode,
                             );
                             let noise_3d = noise.unsqueeze_dim::<3>(0).expand([dims[0], dims[1], dims[2]]);
                             self.states[i] = deterministic + noise_3d;
@@ -866,12 +896,14 @@ impl<B: Backend> BatchHybridEngine<B> {
             stimuli: vec![],
             nsig: crate::config::NsigConfig::Scalar(0.0),
             speed: 3.0,
+            noise_mode: Default::default(),
             backend: "ndarray".to_string(),
         };
         let mut engine = BatchHybridEngine::<B>::from_config(config, n_sweep, self.device.clone())
             .expect("from_config should succeed");
         engine.hybrid_integrator = self.hybrid_integrator;
         engine.nsig_vec = self.nsig_vec.clone();
+        engine.noise_mode = self.noise_mode;
 
         // Build per-sweep-point params: for each subnetwork, a [n_sweep, n_params] matrix
         // where row i has default params with swept values overridden for that Cartesian point.
@@ -1000,30 +1032,33 @@ impl<B: Backend> BatchHybridEngine<B> {
                         mean.mul_scalar(*weight)
                             .expand([n_sweep, tgt_nnodes_i, pre_ncvar])
                     }
-                    ProjectionWeightKind::Dense { weights } => {
-                        let src_nnodes = weights.shape().dims[0];
+                    ProjectionWeightKind::Dense { weights_3d, .. } => {
+                        let w3d = weights_3d.as_ref().expect("weights_3d should be pre-computed");
                         let cvar_t = pre_cvar.swap_dims(1, 2);
-                        let weights_3d = weights
-                            .clone()
-                            .unsqueeze_dim::<3>(0)
-                            .expand([n_sweep, src_nnodes, weights.shape().dims[1]]);
-                        let result = cvar_t.matmul(weights_3d);
+                        let result = cvar_t.matmul(w3d.clone());
                         result.swap_dims(1, 2)
                     }
-                    ProjectionWeightKind::Csr { weights } => {
-                        let src_nnodes = weights.shape().dims[0];
+                    ProjectionWeightKind::Csr { weights_3d, .. } => {
+                        let w3d = weights_3d.as_ref().expect("weights_3d should be pre-computed");
                         let cvar_t = pre_cvar.swap_dims(1, 2);
-                        let weights_3d = weights
-                            .clone()
-                            .unsqueeze_dim::<3>(0)
-                            .expand([n_sweep, src_nnodes, weights.shape().dims[1]]);
-                        let result = cvar_t.matmul(weights_3d);
+                        let result = cvar_t.matmul(w3d.clone());
                         result.swap_dims(1, 2)
                     }
                 };
-                let coupled = proj.coupling_fn.post_with_target_3d(weighted_sum, x_i);
+                let coupled = if let Some(ref rowsums_t) = proj.rowsums_tensor {
+                    if let CouplingFnConfig::Difference { a, .. } = proj.coupling_fn {
+                        let xi_3d = x_i.expect("Difference coupling requires target state (x_i)");
+                        let rowsums_expanded = rowsums_t.clone().unsqueeze_dim::<3>(0).expand([n_sweep, rowsums_t.shape().dims[0], rowsums_t.shape().dims[1]]);
+                        let diff = weighted_sum - xi_3d.mul(rowsums_expanded);
+                        diff.mul_scalar(a)
+                    } else {
+                        proj.coupling_fn.post_with_target_3d(weighted_sum, x_i)
+                    }
+                } else {
+                    proj.coupling_fn.post_with_target_3d(weighted_sum, x_i)
+                };
 
-                let tgt_model = &engine.models[tgt_idx];
+                let tgt_model = &self.models[tgt_idx];
                 let tgt_ncvar = tgt_model.ncvar();
                 let remapped = if tgt_ncvar == ncvar
                     && proj.cvar_map.len() == 1
@@ -1109,7 +1144,7 @@ impl<B: Backend> BatchHybridEngine<B> {
                             IntegratorKind::EulerStochastic => {
                                 let dims = engine.states[i].shape().dims;
                                 let noise = crate::engine::integrator::generate_noise_per_var::<B>(
-                                    [dims[1], dims[2]], &engine.nsig_vec, engine.dt, &engine.device,
+                                    [dims[1], dims[2]], &engine.nsig_vec, engine.dt, &engine.device, engine.noise_mode,
                                 );
                                 let noise_3d = noise.unsqueeze_dim::<3>(0).expand([dims[0], dims[1], dims[2]]);
                                 engine.states[i] = engine.states[i].clone() + deriv.mul_scalar(engine.dt) + noise_3d;
@@ -1117,7 +1152,7 @@ impl<B: Backend> BatchHybridEngine<B> {
                             IntegratorKind::HeunStochastic => {
                                 let dims = engine.states[i].shape().dims;
                                 let noise = crate::engine::integrator::generate_noise_per_var::<B>(
-                                    [dims[1], dims[2]], &engine.nsig_vec, engine.dt, &engine.device,
+                                    [dims[1], dims[2]], &engine.nsig_vec, engine.dt, &engine.device, engine.noise_mode,
                                 );
                                 let noise_3d = noise.unsqueeze_dim::<3>(0).expand([dims[0], dims[1], dims[2]]);
                                 let mut predictor = engine.states[i].clone() + deriv.clone().mul_scalar(engine.dt) + noise_3d.clone();
@@ -1139,7 +1174,7 @@ impl<B: Backend> BatchHybridEngine<B> {
                                 let k4 = dfun_batch(model, k4_state, coupling, params, None);
                                 let deterministic = engine.states[i].clone() + (k1 + k2.mul_scalar(2.0) + k3.mul_scalar(2.0) + k4).mul_scalar(engine.dt / 6.0);
                                 let noise = crate::engine::integrator::generate_noise_per_var::<B>(
-                                    [dims[1], dims[2]], &engine.nsig_vec, engine.dt, &engine.device,
+                                    [dims[1], dims[2]], &engine.nsig_vec, engine.dt, &engine.device, engine.noise_mode,
                                 );
                                 let noise_3d = noise.unsqueeze_dim::<3>(0).expand([dims[0], dims[1], dims[2]]);
                                 engine.states[i] = deterministic + noise_3d;
@@ -1185,7 +1220,7 @@ impl<B: Backend> BatchHybridEngine<B> {
                             IntegratorKind::EulerStochastic => {
                                 let dims = engine.states[i].shape().dims;
                                 let noise = crate::engine::integrator::generate_noise_per_var::<B>(
-                                    [dims[1], dims[2]], &engine.nsig_vec, engine.dt, &engine.device,
+                                    [dims[1], dims[2]], &engine.nsig_vec, engine.dt, &engine.device, engine.noise_mode,
                                 );
                                 let noise_3d = noise.unsqueeze_dim::<3>(0).expand([dims[0], dims[1], dims[2]]);
                                 engine.states[i] = engine.states[i].clone() + deriv.mul_scalar(engine.dt) + noise_3d;
@@ -1193,7 +1228,7 @@ impl<B: Backend> BatchHybridEngine<B> {
                             IntegratorKind::HeunStochastic => {
                                 let dims = engine.states[i].shape().dims;
                                 let noise = crate::engine::integrator::generate_noise_per_var::<B>(
-                                    [dims[1], dims[2]], &engine.nsig_vec, engine.dt, &engine.device,
+                                    [dims[1], dims[2]], &engine.nsig_vec, engine.dt, &engine.device, engine.noise_mode,
                                 );
                                 let noise_3d = noise.unsqueeze_dim::<3>(0).expand([dims[0], dims[1], dims[2]]);
                                 let mut predictor = engine.states[i].clone() + deriv.clone().mul_scalar(engine.dt) + noise_3d.clone();
@@ -1215,7 +1250,7 @@ impl<B: Backend> BatchHybridEngine<B> {
                                 let k4 = dfun_batch_multi(model, k4_state, coupling, params, &sweep_by_sub[i]);
                                 let deterministic = engine.states[i].clone() + (k1 + k2.mul_scalar(2.0) + k3.mul_scalar(2.0) + k4).mul_scalar(engine.dt / 6.0);
                                 let noise = crate::engine::integrator::generate_noise_per_var::<B>(
-                                    [dims[1], dims[2]], &engine.nsig_vec, engine.dt, &engine.device,
+                                    [dims[1], dims[2]], &engine.nsig_vec, engine.dt, &engine.device, engine.noise_mode,
                                 );
                                 let noise_3d = noise.unsqueeze_dim::<3>(0).expand([dims[0], dims[1], dims[2]]);
                                 engine.states[i] = deterministic + noise_3d;
@@ -1412,6 +1447,7 @@ mod tests {
             stimuli: vec![],
             nsig: crate::config::NsigConfig::Scalar(0.0),
             speed: 3.0,
+            noise_mode: Default::default(),
             backend: "ndarray".to_string(),
         };
 
@@ -1458,6 +1494,7 @@ mod tests {
             stimuli: vec![],
             nsig: crate::config::NsigConfig::Scalar(0.0),
             speed: 3.0,
+            noise_mode: Default::default(),
             backend: "ndarray".to_string(),
         };
 
@@ -1627,6 +1664,7 @@ mod tests {
             stimuli: vec![],
             nsig: crate::config::NsigConfig::Scalar(0.0),
             speed: 3.0,
+            noise_mode: Default::default(),
             backend: "ndarray".to_string(),
         };
 
@@ -1680,6 +1718,7 @@ mod tests {
             stimuli: vec![],
             nsig: crate::config::NsigConfig::Scalar(0.0),
             speed: 3.0,
+            noise_mode: Default::default(),
             backend: "ndarray".to_string(),
         };
 
@@ -1745,6 +1784,7 @@ mod tests {
             stimuli: vec![],
             nsig: crate::config::NsigConfig::Scalar(0.0),
             speed: 3.0,
+            noise_mode: Default::default(),
             backend: "ndarray".to_string(),
         };
 
@@ -1817,6 +1857,7 @@ mod tests {
             stimuli: vec![],
             nsig: crate::config::NsigConfig::Scalar(0.0),
             speed: 3.0,
+            noise_mode: Default::default(),
             backend: "ndarray".to_string(),
         };
 
@@ -1888,6 +1929,7 @@ mod tests {
             stimuli: vec![],
             nsig: crate::config::NsigConfig::Scalar(0.0),
             speed: 3.0,
+            noise_mode: Default::default(),
             backend: "ndarray".to_string(),
         };
 
@@ -1955,6 +1997,7 @@ mod tests {
             stimuli: vec![],
             nsig: crate::config::NsigConfig::Scalar(0.0),
             speed: 3.0,
+            noise_mode: Default::default(),
             backend: "ndarray".to_string(),
         };
 
@@ -2021,6 +2064,7 @@ mod tests {
             stimuli: vec![],
             nsig: crate::config::NsigConfig::Scalar(0.0),
             speed: 3.0,
+            noise_mode: Default::default(),
             backend: "ndarray".to_string(),
         };
 
@@ -2138,6 +2182,7 @@ mod tests {
             stimuli: vec![],
             nsig: crate::config::NsigConfig::Scalar(0.0),
             speed: 3.0,
+            noise_mode: Default::default(),
             backend: "ndarray".to_string(),
         };
 
@@ -2262,6 +2307,7 @@ mod tests {
             stimuli: vec![],
             nsig: crate::config::NsigConfig::Scalar(0.0),
             speed: 3.0,
+            noise_mode: Default::default(),
             backend: "ndarray".to_string(),
         };
 
@@ -2389,6 +2435,7 @@ mod tests {
             stimuli: vec![],
             nsig: crate::config::NsigConfig::Scalar(0.0),
             speed: 3.0,
+            noise_mode: Default::default(),
             backend: "ndarray".to_string(),
         };
 
@@ -2449,6 +2496,7 @@ mod tests {
             stimuli: vec![],
             nsig: crate::config::NsigConfig::Scalar(0.0),
             speed: 3.0,
+            noise_mode: Default::default(),
             backend: "ndarray".to_string(),
         };
 
@@ -2521,6 +2569,7 @@ mod tests {
             stimuli: vec![],
             nsig: crate::config::NsigConfig::Scalar(0.0),
             speed: 3.0,
+            noise_mode: Default::default(),
             backend: "ndarray".to_string(),
         };
 
@@ -2615,6 +2664,7 @@ mod tests {
                 stimuli: vec![],
                 nsig: crate::config::NsigConfig::Scalar(0.0),
             speed: 3.0,
+            noise_mode: Default::default(),
             backend: "ndarray".to_string(),
             };
 
@@ -2693,6 +2743,7 @@ mod tests {
             stimuli: vec![],
             nsig: crate::config::NsigConfig::Scalar(0.0),
             speed: 3.0,
+            noise_mode: Default::default(),
             backend: "ndarray".to_string(),
         };
 
@@ -2748,6 +2799,7 @@ mod tests {
             stimuli: vec![],
             nsig: crate::config::NsigConfig::Scalar(0.0),
             speed: 3.0,
+            noise_mode: Default::default(),
             backend: "ndarray".to_string(),
         };
 
@@ -2801,6 +2853,7 @@ mod tests {
             stimuli: vec![],
             nsig: crate::config::NsigConfig::Scalar(0.0),
             speed: 3.0,
+            noise_mode: Default::default(),
             backend: "ndarray".to_string(),
         };
 
@@ -2896,6 +2949,7 @@ mod tests {
             stimuli: vec![],
             nsig: crate::config::NsigConfig::Scalar(0.0),
             speed: 3.0,
+            noise_mode: Default::default(),
             backend: "ndarray".to_string(),
         };
 
@@ -2951,8 +3005,9 @@ mod tests {
                 monitors: vec![],
                 stimuli: vec![],
                 nsig: crate::config::NsigConfig::Scalar(0.0),
-                speed: 3.0,
-                backend: "ndarray".to_string(),
+            speed: 3.0,
+            noise_mode: Default::default(),
+            backend: "ndarray".to_string(),
             }
         };
 

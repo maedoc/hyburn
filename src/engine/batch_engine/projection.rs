@@ -15,10 +15,11 @@ pub(crate) struct PrecomputedProjection<B: Backend> {
     pub cvar_map: Vec<(usize, usize)>,
     pub weight_kind: ProjectionWeightKind<B>,
     pub coupling_fn: CouplingFnConfig,
+    pub rowsums_tensor: Option<Tensor<B, 2>>,
 }
 
 pub(crate) enum ProjectionWeightKind<B: Backend> {
     Scalar { weight: f32 },
-    Dense { weights: Tensor<B, 2> },
-    Csr { weights: Tensor<B, 2> },
+    Dense { weights: Tensor<B, 2>, weights_3d: Option<Tensor<B, 3>> },
+    Csr { weights: Tensor<B, 2>, weights_3d: Option<Tensor<B, 3>> },
 }
