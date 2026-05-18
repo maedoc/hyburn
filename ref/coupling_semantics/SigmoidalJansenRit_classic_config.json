@@ -1,0 +1,6 @@
+{
+  "name": "SigmoidalJansenRit_classic",
+  "type": "coupling",
+  "desc": "SigmoidalJansenRit classic mode (cmin=0, cmax=0.005, a=1, r=0.56, midpoint=6)",
+  "input": "x_j_2cvar"
+}

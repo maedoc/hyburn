@@ -54,13 +54,8 @@ pub trait NeuralMassModel<B: Backend> {
     /// Indices of state variables that receive stochastic noise.
     const STVAR: &'static [usize];
 
-    /// Compute state derivatives given current state and coupling input.
-    ///
-    /// - `state`: shape `[nnodes, nvar]`
-    /// - `coupling`: shape `[nnodes, ncvar]`
-    /// - `params`: model-specific parameter slice
-    ///
-    /// Returns derivatives with same shape as `state`.
+    const CVAR: &'static [usize];
+
     fn dfun(
         state: burn::tensor::Tensor<B, 2>,
         coupling: burn::tensor::Tensor<B, 2>,

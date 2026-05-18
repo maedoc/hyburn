@@ -258,6 +258,40 @@ impl<B: Backend> EngineModel<B> {
         }
     }
 
+    pub fn cvar(&self) -> &'static [usize] {
+        match self {
+            EngineModel::G2do { .. } => <Generic2dOscillator as NeuralMassModel<B>>::CVAR,
+            EngineModel::Mpr { .. } => <MontbrioPazoRoxin as NeuralMassModel<B>>::CVAR,
+            EngineModel::Rww { .. } => <ReducedWongWang as NeuralMassModel<B>>::CVAR,
+            EngineModel::Kuramoto { .. } => <Kuramoto as NeuralMassModel<B>>::CVAR,
+            EngineModel::JansenRit { .. } => <JansenRit as NeuralMassModel<B>>::CVAR,
+            EngineModel::WilsonCowan { .. } => <WilsonCowan as NeuralMassModel<B>>::CVAR,
+            EngineModel::Linear { .. } => <Linear as NeuralMassModel<B>>::CVAR,
+            EngineModel::SupHopf { .. } => <SupHopf as NeuralMassModel<B>>::CVAR,
+            EngineModel::Hopfield { .. } => <Hopfield as NeuralMassModel<B>>::CVAR,
+            EngineModel::CoombesByrne2D { .. } => <CoombesByrne2D as NeuralMassModel<B>>::CVAR,
+            EngineModel::CoombesByrne { .. } => <CoombesByrne as NeuralMassModel<B>>::CVAR,
+            EngineModel::GastSD { .. } => <GastSchmidtKnoscheSD as NeuralMassModel<B>>::CVAR,
+            EngineModel::GastSF { .. } => <GastSchmidtKnoscheSF as NeuralMassModel<B>>::CVAR,
+            EngineModel::LarterBreakspear { .. } => <LarterBreakspear as NeuralMassModel<B>>::CVAR,
+            EngineModel::Epileptor2D { .. } => <Epileptor2D as NeuralMassModel<B>>::CVAR,
+            EngineModel::Epileptor { .. } => <Epileptor as NeuralMassModel<B>>::CVAR,
+            EngineModel::RwwExcInh { .. } => <ReducedWongWangExcInh as NeuralMassModel<B>>::CVAR,
+            EngineModel::DecoBalancedExcInh { .. } => <DecoBalancedExcInh as NeuralMassModel<B>>::CVAR,
+            EngineModel::EpileptorCodim3 { .. } => <EpileptorCodim3 as NeuralMassModel<B>>::CVAR,
+            EngineModel::EpileptorCodim3SlowMod { .. } => <EpileptorCodim3SlowMod as NeuralMassModel<B>>::CVAR,
+            EngineModel::EpileptorRS { .. } => <EpileptorRestingState as NeuralMassModel<B>>::CVAR,
+            EngineModel::ZetterbergJansen { .. } => <ZetterbergJansen as NeuralMassModel<B>>::CVAR,
+            EngineModel::ReducedFHN { .. } => <ReducedSetFitzHughNagumo as NeuralMassModel<B>>::CVAR,
+            EngineModel::ReducedHR { .. } => <ReducedSetHindmarshRose as NeuralMassModel<B>>::CVAR,
+            EngineModel::DumontGutkin { .. } => <DumontGutkin as NeuralMassModel<B>>::CVAR,
+            EngineModel::ZerlautFirst { .. } => <ZerlautAdaptationFirstOrder as NeuralMassModel<B>>::CVAR,
+            EngineModel::ZerlautSecond { .. } => <ZerlautAdaptationSecondOrder as NeuralMassModel<B>>::CVAR,
+            EngineModel::KIonEx { .. } => <KIonEx as NeuralMassModel<B>>::CVAR,
+            _ => unreachable!(),
+        }
+    }
+
     pub fn dfun(&self, state: Tensor<B, 2>, coupling: Tensor<B, 2>) -> Tensor<B, 2> {
         use crate::engine::batch_engine::dfun::{dfun_batch, model_param_slice};
 
@@ -290,6 +324,11 @@ pub struct Projection<B: Backend> {
     pub csr_idelays: Option<Vec<u32>>,
     pub is_sparse: bool,
     pub cvar_map: Vec<(usize, usize)>,
+    /// Maps each target coupling-variable index (from cvar_map) to its position
+    /// within the target model's CVAR array. This ensures correct indexing into
+    /// the target's coupling array when CVAR contains non-sequential state-variable
+    /// indices (e.g., JansenRit CVAR=[1] means coupling[0] maps to state var 1).
+    pub target_cvar_cpl: Vec<usize>,
     pub rowsums_tensor: Option<Tensor<B, 2>>,
 }
 
@@ -456,6 +495,7 @@ impl<B: Backend> HybridEngine<B> {
             nmodes,
             nvar,
             ncvar: model.ncvar(),
+            cvar: model.cvar().to_vec(),
             state_offset: 0,
             state_len: nvar * nnodes * nmodes,
             _phantom: std::marker::PhantomData,
@@ -711,6 +751,11 @@ impl<B: Backend> HybridEngine<B> {
                 }
             }
 
+            let tgt_cvar = &subnetworks[proj_cfg.tgt].cvar;
+            let target_cvar_cpl: Vec<usize> = cvar_map_parsed.iter().map(|&(_s, t)| {
+                tgt_cvar.iter().position(|&v| v == t).unwrap_or(0)
+            }).collect();
+
             let rowsums_tensor = if let CouplingFnConfig::Difference { rowsums: Some(ref rs), .. } = coupling_cfg {
                 let tgt_ncvar = subnetworks[proj_cfg.tgt].ncvar;
                 Some(
@@ -735,6 +780,7 @@ impl<B: Backend> HybridEngine<B> {
                 csr_idelays,
                 is_sparse,
                 cvar_map: cvar_map_parsed,
+                target_cvar_cpl,
                 rowsums_tensor,
             });
         }

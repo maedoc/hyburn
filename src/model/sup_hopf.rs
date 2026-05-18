@@ -7,6 +7,7 @@ pub struct SupHopf;
 impl<B: Backend> NeuralMassModel<B> for SupHopf {
     const NVAR: usize = 2;
     const NCVAR: usize = 2;
+    const CVAR: &'static [usize] = &[0, 1];
     const PARAM_NAMES: &'static [&'static str] = &["a", "omega"];
 
     const PARAM_RANGES: &'static [(f32, f32)] = &[

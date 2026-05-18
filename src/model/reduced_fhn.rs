@@ -7,6 +7,7 @@ pub struct ReducedSetFitzHughNagumo;
 impl<B: Backend> NeuralMassModel<B> for ReducedSetFitzHughNagumo {
     const NVAR: usize = 4;
     const NCVAR: usize = 2;
+    const CVAR: &'static [usize] = &[0, 2];
     const PARAM_NAMES: &'static [&'static str] = &[
         "tau", "a", "b", "K11", "K12", "K21", "sigma", "mu",
     ];

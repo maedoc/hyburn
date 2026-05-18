@@ -1,0 +1,6 @@
+{
+  "name": "PreSigmoidal_dynamic_classic",
+  "type": "coupling",
+  "desc": "PreSigmoidal dynamic (H=0.5, Q=1, G=60, P=1, dynamic=True): 2-cvar H*(Q+tanh(G*(P*x0-x1)))",
+  "input": "x_j_2cvar"
+}

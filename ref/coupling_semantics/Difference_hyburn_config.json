@@ -1,0 +1,7 @@
+{
+  "name": "Difference_hyburn",
+  "type": "coupling",
+  "desc": "Difference(a=0.1): hyburn rowsums approach: a*(W@x_j - x_i*rowsums)",
+  "input": "x_j",
+  "needs_xi": true
+}

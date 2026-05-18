@@ -7,6 +7,7 @@ pub struct KIonEx;
 impl<B: Backend> NeuralMassModel<B> for KIonEx {
     const NVAR: usize = 5;
     const NCVAR: usize = 1;
+    const CVAR: &'static [usize] = &[0];
     const PARAM_NAMES: &'static [&'static str] = &[
         "E", "K_bath", "J", "eta", "Delta",
         "c_minus", "R_minus", "c_plus", "R_plus", "Vstar",

@@ -1,0 +1,6 @@
+{
+  "name": "Tanh_classic",
+  "type": "coupling",
+  "desc": "HyperbolicTangent(a=1, b=2, midpoint=0, sigma=1) \u2014 NOTE b=2 not b=1",
+  "input": "x_j"
+}

@@ -7,6 +7,7 @@ pub struct ZerlautAdaptationSecondOrder;
 impl<B: Backend> NeuralMassModel<B> for ZerlautAdaptationSecondOrder {
     const NVAR: usize = 8;
     const NCVAR: usize = 1;
+    const CVAR: &'static [usize] = &[0];
     const PARAM_NAMES: &'static [&'static str] = &[
         "g_L", "E_L_e", "E_L_i", "C_m",
         "b_e", "a_e", "b_i", "a_i",

@@ -13,6 +13,10 @@ pub struct Subnetwork<B: Backend> {
     pub nmodes: usize,
     pub nvar: usize,
     pub ncvar: usize,
+    /// State-variable indices for each coupling variable position.
+    /// CVAR[i] is the state-variable index that coupling input i maps to.
+    /// Length equals NCVAR.
+    pub cvar: Vec<usize>,
     /// Offset in a flat global state array (for future flat-state designs).
     pub state_offset: usize,
     /// Length of the flat state slice (= nvar * nnodes * nmodes).
@@ -34,6 +38,7 @@ impl<B: Backend> Subnetwork<B> {
             .map_err(|e| SimulationError::InvalidConfig(e.to_string()))?;
         let nvar = model.nvar();
         let ncvar = model.ncvar();
+        let cvar = model.cvar().to_vec();
         Ok(Self {
             model_name,
             params,
@@ -41,6 +46,7 @@ impl<B: Backend> Subnetwork<B> {
             nmodes,
             nvar,
             ncvar,
+            cvar,
             state_offset,
             state_len: nvar * nnodes * nmodes,
             _phantom: std::marker::PhantomData,

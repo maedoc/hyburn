@@ -7,6 +7,7 @@ pub struct Epileptor;
 impl<B: Backend> NeuralMassModel<B> for Epileptor {
     const NVAR: usize = 6;
     const NCVAR: usize = 2;
+    const CVAR: &'static [usize] = &[0, 3];
     const PARAM_NAMES: &'static [&'static str] = &[
         "Iext", "Iext2", "x0", "a", "b", "c", "d", "r",
         "slope", "tau", "aa", "bb", "Kvf", "Kf", "Ks", "tt", "modification",

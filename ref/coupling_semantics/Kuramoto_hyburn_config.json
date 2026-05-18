@@ -1,0 +1,7 @@
+{
+  "name": "Kuramoto_hyburn",
+  "type": "coupling",
+  "desc": "Kuramoto(a=1): hyburn 2-channel (sin,cos) post_with_target",
+  "input": "x_j",
+  "needs_xi": true
+}

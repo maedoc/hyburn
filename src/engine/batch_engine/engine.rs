@@ -386,6 +386,12 @@ impl<B: Backend> BatchHybridEngine<B> {
                 }
             }
 
+            let tgt_model = &models[proj.tgt];
+            let tgt_cvar = tgt_model.cvar();
+            let target_cvar_cpl: Vec<usize> = cvar_map_parsed.iter().map(|&(_s, t)| {
+                tgt_cvar.iter().position(|&v| v == t).unwrap_or(0)
+            }).collect();
+
             let rowsums_tensor = if let CouplingFnConfig::Difference { rowsums: Some(ref rs), .. } = coupling_fn {
                 let tgt_ncvar = models[proj.tgt].ncvar();
                 Some(
@@ -403,6 +409,7 @@ impl<B: Backend> BatchHybridEngine<B> {
                 tgt: proj.tgt,
                 delay: proj.delays.first().copied().unwrap_or(0),
                 cvar_map: cvar_map_parsed,
+                target_cvar_cpl,
                 weight_kind,
                 coupling_fn,
                 rowsums_tensor,
@@ -639,11 +646,12 @@ impl<B: Backend> BatchHybridEngine<B> {
                     let n_nodes = coupled.shape().dims[1];
                     let mut tgt_data = vec![0.0f32; n_batch * n_nodes * tgt_ncvar];
                     let src_data = crate::io::tensor_to_flat_f32(coupled.clone()).0;
-                    for &(s, t) in &proj.cvar_map {
-                        if s < src_ncvar && t < tgt_ncvar {
+                    for (i, &(s, _t)) in proj.cvar_map.iter().enumerate() {
+                        let cpl_idx = *proj.target_cvar_cpl.get(i).unwrap_or(&0);
+                        if s < src_ncvar && cpl_idx < tgt_ncvar {
                             for b in 0..n_batch {
                                 for n in 0..n_nodes {
-                                    tgt_data[(b * n_nodes + n) * tgt_ncvar + t] +=
+                                    tgt_data[(b * n_nodes + n) * tgt_ncvar + cpl_idx] +=
                                         src_data[(b * n_nodes + n) * src_ncvar + s];
                                 }
                             }
@@ -1071,11 +1079,12 @@ impl<B: Backend> BatchHybridEngine<B> {
                     let n_nodes = coupled.shape().dims[1];
                     let mut tgt_data = vec![0.0f32; n_batch * n_nodes * tgt_ncvar];
                     let src_data = crate::io::tensor_to_flat_f32(coupled.clone()).0;
-                    for &(s, t) in &proj.cvar_map {
-                        if s < src_ncvar && t < tgt_ncvar {
+                    for (i, &(s, _t)) in proj.cvar_map.iter().enumerate() {
+                        let cpl_idx = *proj.target_cvar_cpl.get(i).unwrap_or(&0);
+                        if s < src_ncvar && cpl_idx < tgt_ncvar {
                             for b in 0..n_batch {
                                 for n in 0..n_nodes {
-                                    tgt_data[(b * n_nodes + n) * tgt_ncvar + t] +=
+                                    tgt_data[(b * n_nodes + n) * tgt_ncvar + cpl_idx] +=
                                         src_data[(b * n_nodes + n) * src_ncvar + s];
                                 }
                             }

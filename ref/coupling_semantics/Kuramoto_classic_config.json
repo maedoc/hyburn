@@ -1,0 +1,7 @@
+{
+  "name": "Kuramoto_classic",
+  "type": "coupling",
+  "desc": "Kuramoto(a=1): (1/N) * sum_j(w_ij * sin(x_j - x_i)) per edge",
+  "input": "x_j",
+  "needs_xi": true
+}

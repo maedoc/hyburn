@@ -7,6 +7,7 @@ pub struct GastSchmidtKnoscheSF;
 impl<B: Backend> NeuralMassModel<B> for GastSchmidtKnoscheSF {
     const NVAR: usize = 4;
     const NCVAR: usize = 4;
+    const CVAR: &'static [usize] = &[0, 1, 2, 3];
     const PARAM_NAMES: &'static [&'static str] = &[
         "tau", "tau_A", "alpha", "I", "Delta", "J", "eta", "cr", "cv"
     ];

@@ -7,6 +7,7 @@ pub struct LarterBreakspear;
 impl<B: Backend> NeuralMassModel<B> for LarterBreakspear {
     const NVAR: usize = 3;
     const NCVAR: usize = 1;
+    const CVAR: &'static [usize] = &[0];
     const PARAM_NAMES: &'static [&'static str] = &[
         "gCa", "gK", "gL", "gNa", "phi",
         "VCa", "VK", "VL", "VNa",

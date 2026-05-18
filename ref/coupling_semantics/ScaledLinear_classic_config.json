@@ -1,0 +1,6 @@
+{
+  "name": "ScaledLinear_classic",
+  "type": "coupling",
+  "desc": "ScaledLinear(a=0.004, b=0.001): a*(W@x_j - b)",
+  "input": "x_j"
+}

@@ -7,6 +7,7 @@ pub struct Linear;
 impl<B: Backend> NeuralMassModel<B> for Linear {
     const NVAR: usize = 1;
     const NCVAR: usize = 1;
+    const CVAR: &'static [usize] = &[0];
     const PARAM_NAMES: &'static [&'static str] = &["gamma"];
 
     const PARAM_RANGES: &'static [(f32, f32)] = &[

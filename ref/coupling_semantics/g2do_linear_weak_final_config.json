@@ -1,0 +1,58 @@
+{
+  "name": "g2do_linear_weak_final",
+  "type": "e2e",
+  "desc": "G2DO with Linear(a=0.001,b=0) weak coupling, 4 nodes, 200 steps, dt=0.1",
+  "model": "g2do",
+  "nnodes": 4,
+  "dt": 0.1,
+  "steps": 200,
+  "sim_length": 20.0,
+  "weights": [
+    [
+      0.0,
+      0.01,
+      0.01,
+      0.01
+    ],
+    [
+      0.01,
+      0.0,
+      0.01,
+      0.01
+    ],
+    [
+      0.01,
+      0.01,
+      0.0,
+      0.01
+    ],
+    [
+      0.01,
+      0.01,
+      0.01,
+      0.0
+    ]
+  ],
+  "coupling_fn": "linear",
+  "coupling_params": {
+    "a": 0.001,
+    "b": 0.0
+  },
+  "cvar": [
+    0
+  ],
+  "ic": [
+    [
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.5,
+      0.5,
+      0.5,
+      0.5
+    ]
+  ]
+}

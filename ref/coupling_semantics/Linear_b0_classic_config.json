@@ -1,0 +1,6 @@
+{
+  "name": "Linear_b0_classic",
+  "type": "coupling",
+  "desc": "Linear(a=0.004, b=0): 0.004 * (W @ x_j)",
+  "input": "x_j"
+}

@@ -29,6 +29,7 @@ pub struct Generic2dOscillator;
 impl<B: Backend> NeuralMassModel<B> for Generic2dOscillator {
     const NVAR: usize = 2;
     const NCVAR: usize = 1;
+    const CVAR: &'static [usize] = &[0];
     const PARAM_NAMES: &'static [&'static str] = &[
         "tau", "I", "a", "b", "c", "d", "e", "f", "g", "alpha", "beta", "gamma"
     ];

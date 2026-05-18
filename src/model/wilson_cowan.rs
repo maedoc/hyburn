@@ -25,6 +25,7 @@ pub struct WilsonCowan;
 impl<B: Backend> NeuralMassModel<B> for WilsonCowan {
     const NVAR: usize = 2;
     const NCVAR: usize = 1;
+    const CVAR: &'static [usize] = &[0];
     const PARAM_NAMES: &'static [&'static str] = &[
         "c_ee", "c_ei", "c_ie", "c_ii", "tau_e", "tau_i",
         "a_e", "b_e", "c_e", "theta_e",

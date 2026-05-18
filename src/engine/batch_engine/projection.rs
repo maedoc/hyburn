@@ -13,6 +13,9 @@ pub(crate) struct PrecomputedProjection<B: Backend> {
     pub tgt: usize,
     pub delay: u32,
     pub cvar_map: Vec<(usize, usize)>,
+    /// Maps each target coupling-variable index (from cvar_map) to its position
+    /// within the target model's CVAR array.
+    pub target_cvar_cpl: Vec<usize>,
     pub weight_kind: ProjectionWeightKind<B>,
     pub coupling_fn: CouplingFnConfig,
     pub rowsums_tensor: Option<Tensor<B, 2>>,

@@ -7,6 +7,7 @@ pub struct ZetterbergJansen;
 impl<B: Backend> NeuralMassModel<B> for ZetterbergJansen {
     const NVAR: usize = 12;
     const NCVAR: usize = 1;
+    const CVAR: &'static [usize] = &[3];
     const PARAM_NAMES: &'static [&'static str] = &[
         "He", "Hi", "ke", "ki",
         "e0", "rho_2", "rho_1",

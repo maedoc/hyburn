@@ -292,10 +292,11 @@ impl<B: Backend> HybridEngine<B> {
                     None => vec![0.0f32; ntgt_rows * tgt_ncvar],
                 };
                 let src_ncvar = src_sub.ncvar;
-                for &(s, t) in &proj.cvar_map {
-                    if s < src_ncvar && t < tgt_ncvar {
+                for (i, &(s, _t)) in proj.cvar_map.iter().enumerate() {
+                    let cpl_idx = *proj.target_cvar_cpl.get(i).unwrap_or(&0);
+                    if s < src_ncvar && cpl_idx < tgt_ncvar {
                         for row in 0..ntgt_rows {
-                            tgt_data[row * tgt_ncvar + t] += src_data[row * src_ncvar + s];
+                            tgt_data[row * tgt_ncvar + cpl_idx] += src_data[row * src_ncvar + s];
                         }
                     }
                 }

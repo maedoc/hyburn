@@ -7,6 +7,7 @@ pub struct CoombesByrne;
 impl<B: Backend> NeuralMassModel<B> for CoombesByrne {
     const NVAR: usize = 4;
     const NCVAR: usize = 4;
+    const CVAR: &'static [usize] = &[0, 1, 2, 3];
     const PARAM_NAMES: &'static [&'static str] = &["Delta", "alpha", "v_syn", "k", "eta"];
 
     const PARAM_RANGES: &'static [(f32, f32)] = &[

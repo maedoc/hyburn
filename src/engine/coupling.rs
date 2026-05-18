@@ -24,8 +24,10 @@
 //! | ScaledLinear       | identity                              | a*(x - b)                        | no        |
 //! | Kuramoto           | [sin(x), cos(x)] (2ch)               | a/N*(cos(x_i)*Σsin - sin(x_i)*Σcos) | yes   |
 //! | HyperbolicTangent  | a*(1+tanh((b*x-midpoint)/sigma))     | identity                         | no        |
-//! | SigmoidalJansenRit | a*(2*e0)/(1+exp(r*(v0-x)))           | identity                         | no        |
-//! | PreSigmoidal       | h*(q+tanh(g*(p*x-θ)))                | identity                         | no        |
+//! | SigmoidalJansenRit (classic) | cmin+(cmax-cmin)/(1+exp(r*(mid-x))) | a*gx                             | no        |
+//! | SigmoidalJansenRit (legacy) | a*(2*e0)/(1+exp(r*(v0-x)))         | identity                         | no        |
+//! | PreSigmoidal (static) | h*(q+tanh(g*(p*x-θ)))             | identity                         | no        |
+//! | PreSigmoidal (dynamic) | h*(q+tanh(g*(P*x0-x1)))          | identity                         | no        |
 //! | Difference         | identity                              | a*(gx - x_i*rowsums)            | yes*      |
 //!
 //! *Difference with square weight matrices is converted to Linear at construction
@@ -39,6 +41,13 @@ fn default_sigma() -> f32 { 1.0 }
 fn default_cmin() -> f32 { -1.0 }
 fn default_sigmoidal_a() -> f32 { 1.0 }
 fn default_n_src() -> usize { 1 }
+fn default_sjr_r() -> f32 { 0.56 }
+fn default_sjr_v0() -> f32 { 6.0 }
+fn default_sjr_e0() -> f32 { 0.005 }
+fn default_sjr_cmin() -> f32 { 0.0 }
+fn default_sjr_cmax() -> f32 { 0.005 }
+fn default_sjr_midpoint() -> f32 { 6.0 }
+fn default_use_classic() -> bool { false }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CouplingFnConfig {
@@ -48,13 +57,31 @@ pub enum CouplingFnConfig {
     Kuramoto { a: f32, #[serde(default = "default_n_src")] n_src: usize },
     ScaledLinear { a: f32, b: f32 },
     HyperbolicTangent { a: f32, b: f32, #[serde(default)] midpoint: f32, #[serde(default = "default_sigma")] sigma: f32 },
-    SigmoidalJansenRit { a: f32, e0: f32, r: f32, v0: f32 },
+    SigmoidalJansenRit {
+        a: f32,
+        #[serde(default = "default_use_classic")] use_classic: bool,
+        #[serde(default = "default_sjr_cmin")] cmin: f32,
+        #[serde(default = "default_sjr_cmax")] cmax: f32,
+        #[serde(default = "default_sjr_r")] r: f32,
+        #[serde(default = "default_sjr_midpoint")] midpoint: f32,
+        #[serde(default = "default_sjr_e0")] e0: f32,
+        #[serde(default = "default_sjr_v0")] v0: f32,
+    },
     PreSigmoidal { h: f32, q: f32, g: f32, p: f32, theta: f32, #[serde(default)] dynamic: bool, #[serde(default)] global_t: bool },
 }
 
 impl CouplingFnConfig {
     pub fn min_src_ncvar(&self) -> usize {
-        1
+        match self {
+            CouplingFnConfig::SigmoidalJansenRit { use_classic: true, .. } => 2,
+            CouplingFnConfig::PreSigmoidal { dynamic: true, .. } => 2,
+            _ => 1,
+        }
+    }
+
+    #[inline]
+    pub fn needs_two_src_cvar(&self) -> bool {
+        matches!(self, CouplingFnConfig::SigmoidalJansenRit { use_classic: true, .. } | CouplingFnConfig::PreSigmoidal { dynamic: true, .. })
     }
 
     #[inline]
@@ -66,6 +93,8 @@ impl CouplingFnConfig {
     pub fn pre_channels(&self) -> usize {
         match self {
             CouplingFnConfig::Kuramoto { .. } => 2,
+            CouplingFnConfig::SigmoidalJansenRit { use_classic: true, .. } => 1,
+            CouplingFnConfig::PreSigmoidal { dynamic: true, .. } => 1,
             _ => 1,
         }
     }
@@ -125,11 +154,38 @@ impl CouplingFnConfig {
                 Some(CouplingFnConfig::HyperbolicTangent { a, b, midpoint, sigma })
             }
             "SigmoidalJansenRit" => {
-                let a = params.first().copied().unwrap_or(1.0);
-                let e0 = params.get(1).copied().unwrap_or(0.005);
-                let r = params.get(2).copied().unwrap_or(0.56);
-                let v0 = params.get(3).copied().unwrap_or(6.0);
-                Some(CouplingFnConfig::SigmoidalJansenRit { a, e0, r, v0 })
+                if params.len() >= 5 {
+                    let a = params[0];
+                    let cmin = params[1];
+                    let cmax = params[2];
+                    let r = params[3];
+                    let midpoint = params[4];
+                    Some(CouplingFnConfig::SigmoidalJansenRit {
+                        a,
+                        use_classic: true,
+                        cmin,
+                        cmax,
+                        r,
+                        midpoint,
+                        e0: 0.005,
+                        v0: 6.0,
+                    })
+                } else {
+                    let a = params.first().copied().unwrap_or(1.0);
+                    let e0 = params.get(1).copied().unwrap_or(0.005);
+                    let r = params.get(2).copied().unwrap_or(0.56);
+                    let v0 = params.get(3).copied().unwrap_or(6.0);
+                    Some(CouplingFnConfig::SigmoidalJansenRit {
+                        a,
+                        use_classic: false,
+                        cmin: 0.0,
+                        cmax: 0.005,
+                        r,
+                        midpoint: 6.0,
+                        e0,
+                        v0,
+                    })
+                }
             }
             "PreSigmoidal" => {
                 let h = params.first().copied().unwrap_or(1.0);
@@ -161,7 +217,7 @@ impl CouplingFnConfig {
                 let inner = x.mul_scalar(*b).add_scalar(-*midpoint).div_scalar(*sigma);
                 inner.tanh().add_scalar(1.0).mul_scalar(*a)
             }
-            CouplingFnConfig::SigmoidalJansenRit { a, e0, r, v0 } => {
+            CouplingFnConfig::SigmoidalJansenRit { a, use_classic, cmin, cmax, r, midpoint, e0, v0 } => {
                 let dims = x.shape().dims;
                 let x0 = x.clone().narrow(1, 0, 1);
                 let x1 = if dims[1] >= 2 {
@@ -170,24 +226,33 @@ impl CouplingFnConfig {
                     Tensor::zeros([dims[0], 1], &x.device())
                 };
                 let diff = x0 - x1;
-                let shifted = diff.add_scalar(-*v0).mul_scalar(-*r);
-                let denom = shifted.exp().add_scalar(1.0);
-                denom.recip().mul_scalar(*a * 2.0 * *e0)
+                if *use_classic {
+                    let shifted = diff.add_scalar(-*midpoint).mul_scalar(-*r);
+                    let denom = shifted.exp().add_scalar(1.0);
+                    denom.recip().mul_scalar(cmax - cmin).add_scalar(*cmin)
+                } else {
+                    let shifted = diff.add_scalar(-*v0).mul_scalar(-*r);
+                    let denom = shifted.exp().add_scalar(1.0);
+                    denom.recip().mul_scalar(*a * 2.0 * *e0)
+                }
             }
             CouplingFnConfig::PreSigmoidal { h, q, g, p, theta, dynamic, global_t } => {
-                let inner = if *dynamic {
-                    let px = x.mul_scalar(*p);
-                    if *global_t {
-                        let mean = px.clone().mean().reshape([1, 1]);
-                        px - mean
+                if *dynamic {
+                    let dims = x.shape().dims;
+                    let x0 = x.clone().narrow(1, 0, 1);
+                    let x1 = x.narrow(1, 1, 1);
+                    let threshold = if *global_t {
+                        let mean = x1.clone().mean().reshape([1, 1]);
+                        mean.expand([dims[0], 1])
                     } else {
-                        let mean = px.clone().mean_dim(0).reshape([1, px.shape().dims[1]]);
-                        px - mean
-                    }
+                        x1
+                    };
+                    let inner = x0.mul_scalar(*p) - threshold;
+                    inner.mul_scalar(*g).tanh().add_scalar(*q).mul_scalar(*h)
                 } else {
-                    x.mul_scalar(*p).add_scalar(-*theta)
-                };
-                inner.mul_scalar(*g).tanh().add_scalar(*q).mul_scalar(*h)
+                    let inner = x.mul_scalar(*p).add_scalar(-*theta);
+                    inner.mul_scalar(*g).tanh().add_scalar(*q).mul_scalar(*h)
+                }
             }
         }
     }
@@ -223,27 +288,26 @@ impl CouplingFnConfig {
                     })
                     .collect()
             }
-            CouplingFnConfig::SigmoidalJansenRit { a, e0, r, v0 } => {
+            CouplingFnConfig::SigmoidalJansenRit { a, use_classic, cmin, cmax, r, midpoint, e0, v0 } => {
                 let x0 = row.first().copied().unwrap_or(0.0);
                 let x1 = if row.len() >= 2 { row[1] } else { 0.0 };
                 let diff = x0 - x1;
-                let shifted = (diff - v0) * (-r);
-                let denom = shifted.exp() + 1.0;
-                vec![a * 2.0 * e0 / denom]
+                if *use_classic {
+                    let shifted = (diff - midpoint) * (-r);
+                    let denom = shifted.exp() + 1.0;
+                    vec![cmin + (cmax - cmin) / denom]
+                } else {
+                    let shifted = (diff - v0) * (-r);
+                    let denom = shifted.exp() + 1.0;
+                    vec![a * 2.0 * e0 / denom]
+                }
             }
-            CouplingFnConfig::PreSigmoidal { h, q, g, p, theta, dynamic, global_t } => {
+            CouplingFnConfig::PreSigmoidal { h, q, g, p, theta, dynamic, global_t: _ } => {
                 if *dynamic {
-                    let mean = if *global_t {
-                        row.iter().sum::<f32>() / row.len() as f32
-                    } else {
-                        row[0]
-                    };
-                    row.iter()
-                        .map(|&v| {
-                            let inner = p * v - mean;
-                            h * (q + (g * inner).tanh())
-                        })
-                        .collect()
+                    let x0 = row[0];
+                    let x1 = if row.len() >= 2 { row[1] } else { 0.0 };
+                    let inner = p * x0 - x1;
+                    vec![h * (q + (g * inner).tanh())]
                 } else {
                     row.iter()
                         .map(|&v| {
@@ -274,7 +338,8 @@ impl CouplingFnConfig {
                 sin_sum.mul_scalar(*a / *n_src as f32)
             }
             CouplingFnConfig::HyperbolicTangent { .. } => gx,
-            CouplingFnConfig::SigmoidalJansenRit { .. } => gx,
+            CouplingFnConfig::SigmoidalJansenRit { use_classic: true, a, .. } => gx.mul_scalar(*a),
+            CouplingFnConfig::SigmoidalJansenRit { use_classic: false, .. } => gx,
             CouplingFnConfig::PreSigmoidal { .. } => gx,
         }
     }
@@ -741,6 +806,9 @@ mod tests {
         assert_eq!(CouplingFnConfig::Linear { a: 1.0, b: 0.0 }.pre_channels(), 1);
         assert_eq!(CouplingFnConfig::Kuramoto { a: 1.0, n_src: 4 }.pre_channels(), 2);
         assert_eq!(CouplingFnConfig::Difference { a: 0.1, rowsums: None }.pre_channels(), 1);
+        assert_eq!(CouplingFnConfig::SigmoidalJansenRit { a: 1.0, use_classic: true, cmin: 0.0, cmax: 0.01, r: 0.56, midpoint: 6.0, e0: 0.005, v0: 6.0 }.pre_channels(), 1);
+        assert_eq!(CouplingFnConfig::PreSigmoidal { h: 1.0, q: 1.0, g: 1.0, p: 1.0, theta: 0.5, dynamic: true, global_t: false }.pre_channels(), 1);
+        assert_eq!(CouplingFnConfig::PreSigmoidal { h: 1.0, q: 1.0, g: 1.0, p: 1.0, theta: 0.5, dynamic: false, global_t: false }.pre_channels(), 1);
     }
 
     #[test]
@@ -762,7 +830,7 @@ mod tests {
             CouplingFnConfig::Kuramoto { a: 1.0, n_src: 1 },
             CouplingFnConfig::ScaledLinear { a: 2.0, b: 1.0 },
             CouplingFnConfig::HyperbolicTangent { a: 1.0, b: 1.0, midpoint: 0.0, sigma: 1.0 },
-            CouplingFnConfig::SigmoidalJansenRit { a: 1.0, e0: 0.005, r: 0.56, v0: 6.0 },
+            CouplingFnConfig::SigmoidalJansenRit { a: 1.0, use_classic: false, cmin: 0.0, cmax: 0.005, r: 0.56, midpoint: 6.0, e0: 0.005, v0: 6.0 },
             CouplingFnConfig::PreSigmoidal { h: 1.0, q: 1.0, g: 1.0, p: 1.0, theta: 0.5, dynamic: false, global_t: false },
             CouplingFnConfig::PreSigmoidal { h: 1.0, q: 1.0, g: 1.0, p: 1.0, theta: 0.5, dynamic: true, global_t: true },
         ];
@@ -818,17 +886,71 @@ mod tests {
         let cfg = CouplingFnConfig::PreSigmoidal { h: 1.0, q: 0.0, g: 1.0, p: 1.0, theta: 0.0, dynamic: true, global_t: false };
         let dev: <B as Backend>::Device = Default::default();
         let x = Tensor::<B, 2>::from_floats(
-            TensorData::new::<f32, Vec<usize>>(vec![1.0, 3.0, 2.0, 4.0], vec![2, 2]), &dev,
+            TensorData::new::<f32, Vec<usize>>(vec![1.0, 0.5, 2.0, 0.3], vec![2, 2]), &dev,
         );
         let result = cfg.pre(x);
-        let (data, _) = crate::io::tensor_to_flat_f32(result);
-        assert!(data.iter().all(|v| v.is_finite()));
-        assert!(data.iter().any(|v| v.abs() > 0.01));
+        let (data, shape) = crate::io::tensor_to_flat_f32(result);
+        assert_eq!(shape, vec![2, 1], "dynamic pre should collapse 2 cvars to 1");
+        let inner0 = 1.0f32 * 1.0 - 0.5f32;
+        let expected0 = 1.0 * (0.0 + (1.0 * inner0).tanh());
+        assert!((data[0] - expected0).abs() < 1e-5, "row 0: expected {}, got {}", expected0, data[0]);
+        let inner1 = 1.0f32 * 2.0 - 0.3f32;
+        let expected1 = 1.0 * (0.0 + (1.0 * inner1).tanh());
+        assert!((data[1] - expected1).abs() < 1e-5, "row 1: expected {}, got {}", expected1, data[1]);
+    }
+
+    #[test]
+    fn test_presigmoidal_dynamic_global_t() {
+        let cfg = CouplingFnConfig::PreSigmoidal { h: 1.0, q: 0.0, g: 1.0, p: 1.0, theta: 0.0, dynamic: true, global_t: true };
+        let dev: <B as Backend>::Device = Default::default();
+        let x = Tensor::<B, 2>::from_floats(
+            TensorData::new::<f32, Vec<usize>>(vec![1.0, 2.0, 0.8, 0.4], vec![2, 2]), &dev,
+        );
+        let result = cfg.pre(x);
+        let (data, shape) = crate::io::tensor_to_flat_f32(result);
+        assert_eq!(shape, vec![2, 1], "dynamic global_t pre should collapse 2 cvars to 1");
+        let mean_threshold = (2.0f32 + 0.4f32) / 2.0f32;
+        let inner0 = 1.0f32 * 1.0 - mean_threshold;
+        let expected0 = 1.0 * (0.0 + (1.0 * inner0).tanh());
+        assert!((data[0] - expected0).abs() < 1e-5, "row 0: expected {}, got {}", expected0, data[0]);
+        let inner1 = 1.0f32 * 0.8 - mean_threshold;
+        let expected1 = 1.0 * (0.0 + (1.0 * inner1).tanh());
+        assert!((data[1] - expected1).abs() < 1e-5, "row 1: expected {}, got {}", expected1, data[1]);
+    }
+
+    #[test]
+    fn test_presigmoidal_dynamic_2cvar_collapse() {
+        let cfg = CouplingFnConfig::PreSigmoidal { h: 2.0, q: 1.0, g: 3.0, p: 0.5, theta: 0.0, dynamic: true, global_t: false };
+        let dev: <B as Backend>::Device = Default::default();
+        let x = Tensor::<B, 2>::from_floats(
+            TensorData::new::<f32, Vec<usize>>(vec![4.0, 1.0, 6.0, 2.0], vec![2, 2]), &dev,
+        );
+        let result = cfg.pre(x);
+        let (data, shape) = crate::io::tensor_to_flat_f32(result);
+        assert_eq!(shape, vec![2, 1], "dynamic pre should output 1 channel");
+        let inner0 = 0.5f32 * 4.0 - 1.0f32;
+        let expected0 = 2.0 * (1.0 + (3.0 * inner0).tanh());
+        assert!((data[0] - expected0).abs() < 1e-4, "row 0: expected {}, got {}", expected0, data[0]);
+        let inner1 = 0.5f32 * 6.0 - 2.0f32;
+        let expected1 = 2.0 * (1.0 + (3.0 * inner1).tanh());
+        assert!((data[1] - expected1).abs() < 1e-4, "row 1: expected {}, got {}", expected1, data[1]);
+    }
+
+    #[test]
+    fn test_presigmoidal_dynamic_needs_two_src_cvar() {
+        let cfg_dynamic = CouplingFnConfig::PreSigmoidal { h: 1.0, q: 1.0, g: 1.0, p: 1.0, theta: 0.5, dynamic: true, global_t: false };
+        let cfg_static = CouplingFnConfig::PreSigmoidal { h: 1.0, q: 1.0, g: 1.0, p: 1.0, theta: 0.5, dynamic: false, global_t: false };
+        assert!(cfg_dynamic.needs_two_src_cvar());
+        assert!(!cfg_static.needs_two_src_cvar());
+        assert_eq!(cfg_dynamic.min_src_ncvar(), 2);
+        assert_eq!(cfg_static.min_src_ncvar(), 1);
+        assert_eq!(cfg_dynamic.pre_channels(), 1);
+        assert_eq!(cfg_static.pre_channels(), 1);
     }
 
     #[test]
     fn test_sigmoidal_jansen_rit_pre_2cvar() {
-        let cfg = CouplingFnConfig::SigmoidalJansenRit { a: 1.0, e0: 0.005, r: 0.56, v0: 6.0 };
+        let cfg = CouplingFnConfig::SigmoidalJansenRit { a: 1.0, use_classic: false, cmin: 0.0, cmax: 0.005, r: 0.56, midpoint: 6.0, e0: 0.005, v0: 6.0 };
         let dev: <B as Backend>::Device = Default::default();
         let x = Tensor::<B, 2>::from_floats(
             TensorData::new::<f32, Vec<usize>>(vec![6.0, 4.0, 6.0, 4.0], vec![2, 2]), &dev,
@@ -841,7 +963,7 @@ mod tests {
 
     #[test]
     fn test_sigmoidal_jansen_rit_pre_single_cvar_fallback() {
-        let cfg = CouplingFnConfig::SigmoidalJansenRit { a: 1.0, e0: 0.005, r: 0.56, v0: 6.0 };
+        let cfg = CouplingFnConfig::SigmoidalJansenRit { a: 1.0, use_classic: false, cmin: 0.0, cmax: 0.005, r: 0.56, midpoint: 6.0, e0: 0.005, v0: 6.0 };
         let dev: <B as Backend>::Device = Default::default();
         let x = Tensor::<B, 2>::from_floats(
             TensorData::new::<f32, Vec<usize>>(vec![6.0, 8.0], vec![2, 1]), &dev,
@@ -849,6 +971,78 @@ mod tests {
         let result = cfg.pre(x);
         let (data, _) = crate::io::tensor_to_flat_f32(result);
         assert!(data.iter().all(|v| v.is_finite()));
+    }
+
+    #[test]
+    fn test_sigmoidal_jansen_rit_classic_pre() {
+        let cfg = CouplingFnConfig::SigmoidalJansenRit {
+            a: 2.0,
+            use_classic: true,
+            cmin: 0.0,
+            cmax: 0.01,
+            r: 0.56,
+            midpoint: 6.0,
+            e0: 0.005,
+            v0: 6.0,
+        };
+        let dev: <B as Backend>::Device = Default::default();
+        let x = Tensor::<B, 2>::from_floats(
+            TensorData::new::<f32, Vec<usize>>(vec![8.0, 2.0, 4.0, 0.0], vec![2, 2]), &dev,
+        );
+        let result = cfg.pre(x);
+        let (data, shape) = crate::io::tensor_to_flat_f32(result);
+        assert_eq!(shape, vec![2, 1], "classic pre should collapse to 1 channel");
+        let diff1 = 8.0f32 - 2.0f32;
+        let expected1 = 0.0 + (0.01 - 0.0) / (1.0 + (0.56 * (6.0 - diff1)).exp());
+        assert!((data[0] - expected1).abs() < 1e-5, "expected {}, got {}", expected1, data[0]);
+        let diff2 = 4.0f32 - 0.0f32;
+        let expected2 = 0.0 + (0.01 - 0.0) / (1.0 + (0.56 * (6.0 - diff2)).exp());
+        assert!((data[1] - expected2).abs() < 1e-5, "expected {}, got {}", expected2, data[1]);
+    }
+
+    #[test]
+    fn test_sigmoidal_jansen_rit_classic_post() {
+        let cfg = CouplingFnConfig::SigmoidalJansenRit {
+            a: 3.0,
+            use_classic: true,
+            cmin: 0.0,
+            cmax: 0.01,
+            r: 0.56,
+            midpoint: 6.0,
+            e0: 0.005,
+            v0: 6.0,
+        };
+        let dev: <B as Backend>::Device = Default::default();
+        let gx = Tensor::<B, 2>::from_floats(
+            TensorData::new::<f32, Vec<usize>>(vec![1.0, 2.0], vec![2, 1]), &dev,
+        );
+        let result = cfg.post(gx);
+        let (data, _) = crate::io::tensor_to_flat_f32(result);
+        assert!((data[0] - 3.0).abs() < 1e-5, "classic post: expected 3.0, got {}", data[0]);
+        assert!((data[1] - 6.0).abs() < 1e-5, "classic post: expected 6.0, got {}", data[1]);
+    }
+
+    #[test]
+    fn test_sigmoidal_jansen_rit_legacy_post_is_identity() {
+        let cfg = CouplingFnConfig::SigmoidalJansenRit {
+            a: 1.0,
+            use_classic: false,
+            cmin: 0.0,
+            cmax: 0.005,
+            r: 0.56,
+            midpoint: 6.0,
+            e0: 0.005,
+            v0: 6.0,
+        };
+        let dev: <B as Backend>::Device = Default::default();
+        let gx = Tensor::<B, 2>::from_floats(
+            TensorData::new::<f32, Vec<usize>>(vec![0.01, 0.02], vec![2, 1]), &dev,
+        );
+        let result = cfg.post(gx.clone());
+        let (data, _) = crate::io::tensor_to_flat_f32(result);
+        let (orig, _) = crate::io::tensor_to_flat_f32(gx);
+        assert!((data[0] - orig[0]).abs() < 1e-7, "legacy post should be identity");
+        assert!((data[1] - orig[1]).abs() < 1e-7, "legacy post should be identity");
     }
 
     #[test]
@@ -959,6 +1153,73 @@ mod serde_compat_tests {
                 assert!(rowsums.is_none()); // rowsums skipped in serde
             }
             _ => panic!("expected Difference"),
+        }
+    }
+
+    #[test]
+    fn test_sjr_old_json_deserialize_legacy() {
+        let old_json = r#"{"SigmoidalJansenRit":{"a":1.0,"e0":0.005,"r":0.56,"v0":6.0}}"#;
+        let cfg: CouplingFnConfig = serde_json::from_str(old_json).unwrap();
+        match cfg {
+            CouplingFnConfig::SigmoidalJansenRit { a, use_classic, cmin, cmax, r, midpoint, e0, v0 } => {
+                assert_eq!(a, 1.0);
+                assert!(!use_classic, "old JSON should default use_classic to false");
+                assert_eq!(e0, 0.005);
+                assert_eq!(r, 0.56);
+                assert_eq!(v0, 6.0);
+                assert_eq!(cmin, 0.0);
+                assert_eq!(cmax, 0.005);
+                assert_eq!(midpoint, 6.0);
+            }
+            _ => panic!("expected SigmoidalJansenRit"),
+        }
+    }
+
+    #[test]
+    fn test_sjr_classic_json_deserialize() {
+        let json = r#"{"SigmoidalJansenRit":{"a":2.0,"use_classic":true,"cmin":0.0,"cmax":0.01,"r":0.56,"midpoint":6.0}}"#;
+        let cfg: CouplingFnConfig = serde_json::from_str(json).unwrap();
+        match cfg {
+            CouplingFnConfig::SigmoidalJansenRit { a, use_classic, cmin, cmax, r, midpoint, .. } => {
+                assert_eq!(a, 2.0);
+                assert!(use_classic);
+                assert_eq!(cmin, 0.0);
+                assert_eq!(cmax, 0.01);
+                assert_eq!(r, 0.56);
+                assert_eq!(midpoint, 6.0);
+            }
+            _ => panic!("expected SigmoidalJansenRit"),
+        }
+    }
+
+    #[test]
+    fn test_sjr_from_params_4param_legacy() {
+        let cfg = CouplingFnConfig::from_name_and_params("SigmoidalJansenRit", &[5.0, 0.005, 0.56, 6.0]).unwrap();
+        match cfg {
+            CouplingFnConfig::SigmoidalJansenRit { a, use_classic, e0, r, v0, .. } => {
+                assert!(!use_classic, "4-param should be legacy mode");
+                assert_eq!(a, 5.0);
+                assert_eq!(e0, 0.005);
+                assert_eq!(r, 0.56);
+                assert_eq!(v0, 6.0);
+            }
+            _ => panic!("expected SigmoidalJansenRit"),
+        }
+    }
+
+    #[test]
+    fn test_sjr_from_params_5param_classic() {
+        let cfg = CouplingFnConfig::from_name_and_params("SigmoidalJansenRit", &[2.0, 0.0, 0.01, 0.56, 6.0]).unwrap();
+        match cfg {
+            CouplingFnConfig::SigmoidalJansenRit { a, use_classic, cmin, cmax, r, midpoint, .. } => {
+                assert!(use_classic, "5-param should be classic mode");
+                assert_eq!(a, 2.0);
+                assert_eq!(cmin, 0.0);
+                assert_eq!(cmax, 0.01);
+                assert_eq!(r, 0.56);
+                assert_eq!(midpoint, 6.0);
+            }
+            _ => panic!("expected SigmoidalJansenRit"),
         }
     }
 }

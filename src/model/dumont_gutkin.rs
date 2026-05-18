@@ -7,6 +7,7 @@ pub struct DumontGutkin;
 impl<B: Backend> NeuralMassModel<B> for DumontGutkin {
     const NVAR: usize = 8;
     const NCVAR: usize = 4;
+    const CVAR: &'static [usize] = &[0, 1, 4, 5];
     const PARAM_NAMES: &'static [&'static str] = &[
         "I_e", "Delta_e", "eta_e", "tau_e",
         "I_i", "Delta_i", "eta_i", "tau_i",

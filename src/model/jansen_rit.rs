@@ -24,6 +24,7 @@ pub struct JansenRit;
 impl<B: Backend> NeuralMassModel<B> for JansenRit {
     const NVAR: usize = 6;
     const NCVAR: usize = 1;
+    const CVAR: &'static [usize] = &[1];
     const PARAM_NAMES: &'static [&'static str] = &[
         "A", "B", "a", "b", "v0", "nu_max", "r", "J",
         "a_1", "a_2", "a_3", "a_4", "mu",

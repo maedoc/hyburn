@@ -1,0 +1,6 @@
+{
+  "name": "PreSigmoidal_static_classic",
+  "type": "coupling",
+  "desc": "PreSigmoidal static (H=1, Q=0, G=1, P=1, theta=0.5): H*(Q+tanh(G*(P*x-theta)))",
+  "input": "x_j"
+}

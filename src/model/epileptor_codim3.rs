@@ -7,6 +7,7 @@ pub struct EpileptorCodim3;
 impl<B: Backend> NeuralMassModel<B> for EpileptorCodim3 {
     const NVAR: usize = 3;
     const NCVAR: usize = 1;
+    const CVAR: &'static [usize] = &[0];
     const PARAM_NAMES: &'static [&'static str] = &[
         "mu1_start", "mu2_start", "nu_start",
         "mu1_stop", "mu2_stop", "nu_stop",

@@ -1,0 +1,6 @@
+{
+  "name": "SigmoidalJansenRit_hyburn",
+  "type": "coupling",
+  "desc": "SigmoidalJansenRit legacy hyburn: a*(2*e0)/(1+exp(r*(v0-(x0-x1))))",
+  "input": "x_j_2cvar"
+}

@@ -1,0 +1,7 @@
+{
+  "name": "Difference_classic",
+  "type": "coupling",
+  "desc": "Difference(a=0.1): a * sum_j(w_ij * (x_j - x_i)) per edge",
+  "input": "x_j",
+  "needs_xi": true
+}

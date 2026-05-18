@@ -7,6 +7,7 @@ pub struct ReducedSetHindmarshRose;
 impl<B: Backend> NeuralMassModel<B> for ReducedSetHindmarshRose {
     const NVAR: usize = 6;
     const NCVAR: usize = 2;
+    const CVAR: &'static [usize] = &[0, 3];
     const PARAM_NAMES: &'static [&'static str] = &[
         "r", "a", "b", "c", "d", "s", "xo",
         "K11", "K12", "K21", "sigma", "mu",

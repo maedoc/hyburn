@@ -1,0 +1,6 @@
+{
+  "name": "Sigmoidal_classic",
+  "type": "coupling",
+  "desc": "Sigmoidal(cmin=-1, cmax=1, a=1, midpoint=0, sigma=1)",
+  "input": "x_j"
+}

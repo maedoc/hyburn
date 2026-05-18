@@ -7,6 +7,7 @@ pub struct ReducedWongWangExcInh;
 impl<B: Backend> NeuralMassModel<B> for ReducedWongWangExcInh {
     const NVAR: usize = 2;
     const NCVAR: usize = 1;
+    const CVAR: &'static [usize] = &[0];
     const PARAM_NAMES: &'static [&'static str] = &[
         "a_e", "b_e", "d_e", "gamma_e", "tau_e",
         "w_p", "J_N", "W_e",
