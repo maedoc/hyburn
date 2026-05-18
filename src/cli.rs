@@ -152,6 +152,29 @@ pub enum Command {
         #[arg(short, long, default_value = "ndarray")]
         backend: String,
     },
+
+    /// Edit/inspect config files (delegates to hyburn-config).
+    ///   Usage: hyburn config <file> [args...]
+    ///   Example: hyburn config sim.toml get network.subnetworks[0].model
+    ///   Example: hyburn config sim.toml set dt 0.1 --validate
+    Config {
+        /// Path to TOML config file.
+        config: String,
+
+        /// Arguments to pass to hyburn-config (subcommand + flags).
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+
+    /// Interactive TUI config editor (delegates to hyburn-tui).
+    Tui {
+        /// Path to TOML config file.
+        config: String,
+
+        /// Path to log file.
+        #[arg(long)]
+        log: Option<String>,
+    },
 }
 
 impl Cli {
@@ -214,6 +237,12 @@ impl Cli {
             Command::Autotune { config } => autotune_cmd(&config),
             Command::Pipeline { config, pipeline, output, backend } => {
                 pipeline_cmd(&config, &pipeline, &output, &backend)
+            }
+            Command::Config { config, args } => {
+                config_cmd(&config, &args)
+            }
+            Command::Tui { config, log } => {
+                tui_cmd(&config, log.as_deref())
             }
         }
     }
@@ -1144,3 +1173,60 @@ fn sbi_report_cmd(
     })
 }
 
+
+// ---------------------------------------------------------------------------
+// Config tools: delegate to standalone hyburn-config / hyburn-tui binaries
+// ---------------------------------------------------------------------------
+
+/// Find the hyburn-config binary next to the current executable, or in PATH.
+fn find_tool_binary(name: &str) -> anyhow::Result<std::path::PathBuf> {
+    // First: check same directory as current executable
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let candidate = dir.join(name);
+            if candidate.exists() {
+                return Ok(candidate);
+            }
+        }
+    }
+    // Fallback: just use the name and rely on PATH
+    Ok(std::path::PathBuf::from(name))
+}
+
+fn config_cmd(config: &str, args: &[String]) -> anyhow::Result<()> {
+    let binary = find_tool_binary("hyburn-config")?;
+    let mut cmd = std::process::Command::new(&binary);
+    // The standalone hyburn-config uses: <subcommand> <file> [path] [value] [flags]
+    // The main CLI receives: hyburn config <file> <subcommand> [path] [value] [flags]
+    // So args already contains [subcommand, ...] but we need to insert
+    // the config file path right after the subcommand.
+    if !args.is_empty() {
+        cmd.arg(&args[0]); // subcommand (get, set, list, etc.)
+        cmd.arg(config);   // file path
+        cmd.args(&args[1..]); // remaining args
+    } else {
+        // No subcommand — just pass --help or show usage
+        cmd.arg("--help");
+    }
+
+    let status = cmd.status()?;
+    if !status.success() {
+        anyhow::bail!("hyburn-config exited with {}", status);
+    }
+    Ok(())
+}
+
+fn tui_cmd(config: &str, log: Option<&str>) -> anyhow::Result<()> {
+    let binary = find_tool_binary("hyburn-tui")?;
+    let mut cmd = std::process::Command::new(&binary);
+    cmd.arg(config);
+    if let Some(l) = log {
+        cmd.arg("--log").arg(l);
+    }
+
+    let status = cmd.status()?;
+    if !status.success() {
+        anyhow::bail!("hyburn-tui exited with {}", status);
+    }
+    Ok(())
+}

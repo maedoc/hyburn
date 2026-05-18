@@ -75,6 +75,9 @@ console_log = { version = "1", optional = true }
 getrandom = { version = "0.2", features = ["js"], optional = true }
 sobol = "1.0.2"
 
+# Config tools — the main binary shells out to the standalone binaries
+# hyburn-config-lib is NOT a direct dep (cyclic: it depends on hyburn)
+
 [dev-dependencies]
 approx = "0.5"
 tempfile = "3"
@@ -87,6 +90,7 @@ cuda = ["dep:burn-cuda"]
 cli = ["dep:clap", "dep:env_logger", "dep:rayon"]
 report = ["dep:plotters"]
 parallel = ["dep:rayon"]
+config-tools = []  # feature gate for config/tui subcommands (no extra deps needed)
 # WASM feature: enables browser-compatible APIs and disables native-only code.
 # Use: cargo build --target wasm32-unknown-unknown --no-default-features --features wasm
 wasm = ["dep:wasm-bindgen", "dep:js-sys", "dep:web-sys", "dep:console_log", "dep:getrandom"]
@@ -104,3 +108,12 @@ opt-level = 3
 
 [package.metadata.wasm-pack.profile.release]
 wasm-opt = ["-O4"]
+
+[workspace]
+members = [
+    ".",
+    "tools/config/hyburn-config-lib",
+    "tools/config/hyburn-config",
+    "tools/config/hyburn-tui",
+]
+resolver = "3"

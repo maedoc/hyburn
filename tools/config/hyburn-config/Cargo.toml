@@ -1,0 +1,15 @@
+[package]
+name = "hyburn-config"
+version = "0.1.0"
+edition = "2024"
+description = "CLI tool for hyburn config file operations"
+
+[[bin]]
+name = "hyburn-config"
+path = "src/main.rs"
+
+[dependencies]
+hyburn-config-lib = { path = "../hyburn-config-lib" }
+clap = { version = "4", features = ["derive"] }
+clap_complete = "4"
+serde_json = "1"
