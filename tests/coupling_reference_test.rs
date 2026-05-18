@@ -335,6 +335,7 @@ fn run_coupled_sim(
         },
         monitors: vec![],
         stimuli: vec![],
+        noise_mode: Default::default(),
     };
     cfg.validate().unwrap_or_else(|e| panic!("Config validation: {}", e));
     let device = Default::default();
@@ -371,6 +372,7 @@ fn run_uncoupled_sim(
         },
         monitors: vec![],
         stimuli: vec![],
+        noise_mode: Default::default(),
     };
     cfg.validate().unwrap_or_else(|e| panic!("Config validation: {}", e));
     let device = Default::default();
@@ -468,6 +470,39 @@ fn test_e2e_sigmoidal_jr_produces_finite() {
         .map(|(a, u)| (a - u).abs())
         .fold(0.0f32, f32::max);
     assert!(max_diff > 1e-3, "sigr_jr: coupling has no effect (max_diff={})", max_diff);
+}
+
+#[test]
+fn test_e2e_kuramoto_coupling_3node() {
+    let nnodes = 3;
+    let ic = vec![0.0f32, 1.0, 2.5];
+    let weights = vec![
+        vec![0.0f32, 0.2, 0.2],
+        vec![0.2f32, 0.0, 0.2],
+        vec![0.2f32, 0.2, 0.0],
+    ];
+    let (coupled_flat, coupled_shape) = run_coupled_sim(
+        "Kuramoto", nnodes,
+        hyburn::model::kuramoto_model::kuramoto_default_params(),
+        ic.clone(),
+        weights,
+        "Kuramoto", vec![1.0], "0:0",
+        150, 0.1, 15.0,
+    );
+    assert!(coupled_flat.iter().all(|v| v.is_finite()), "kuramoto_coupling: non-finite output");
+    assert_eq!(coupled_shape, &[1, nnodes, 1], "kuramoto_coupling: shape mismatch");
+
+    let (uncoupled_flat, _) = run_uncoupled_sim(
+        "Kuramoto", nnodes,
+        hyburn::model::kuramoto_model::kuramoto_default_params(),
+        ic,
+        150, 0.1, 15.0,
+    );
+    let max_diff = coupled_flat.iter()
+        .zip(uncoupled_flat.iter())
+        .map(|(a, u)| (a - u).abs())
+        .fold(0.0f32, f32::max);
+    assert!(max_diff > 1e-3, "kuramoto_coupling: coupling has no effect (max_diff={})", max_diff);
 }
 
 #[test]

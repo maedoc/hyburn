@@ -313,6 +313,7 @@ mod tests {
             stimuli: vec![],
             nsig: crate::config::NsigConfig::Scalar(0.0),
             speed: 3.0,
+            noise_mode: Default::default(),
             backend: "ndarray".to_string(),
         };
         let sc = vec![0.1, 0.2, 0.3, 0.4];
