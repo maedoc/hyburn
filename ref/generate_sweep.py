@@ -7,8 +7,8 @@ hyburn's sweep.toml and saves:
   - Mean trajectories as ref/sweep/{name}_mean_traj.npy  [n_sweep, n_steps+1, nvar]
 
 Usage:
-    ref/.venv/bin/python ref/generate_sweep.py
-    ref/.venv/bin/python ref/generate_sweep.py --config g2do_I_ext_sweep
+    ref/venv/bin/python ref/generate_sweep.py
+    ref/venv/bin/python ref/generate_sweep.py --config g2do_I_ext_sweep
 """
 
 import os

@@ -15,7 +15,7 @@ Saves:
   - ref/jr_psd_sweep/freqs.npy            [n_freqs]
 
 Usage:
-    ref/.venv/bin/python ref/generate_jr_psd_sweep.py
+    ref/venv/bin/python ref/generate_jr_psd_sweep.py
 """
 
 import os

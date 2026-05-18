@@ -6,8 +6,8 @@ For each config in ref/configs.py, runs the TVB hybrid simulator and saves:
   - Full trajectory as ref/single_sim/{name}_trajectory.npy  [n_steps, nvar, nnodes, nmodes]
 
 Usage:
-    ref/.venv/bin/python ref/generate_single_sim.py
-    ref/.venv/bin/python ref/generate_single_sim.py --config g2do_small  # just one
+    ref/venv/bin/python ref/generate_single_sim.py
+    ref/venv/bin/python ref/generate_single_sim.py --config g2do_small  # just one
 """
 
 import os

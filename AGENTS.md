@@ -25,10 +25,28 @@ WGPU builds are slow (~10 min on M-series). Use timeout >= 600000ms for bash com
 ## Test Commands
 
 ```bash
-cargo test --lib                                         # unit/integration tests (~191)
+cargo test --lib                                         # unit/integration tests (~293)
 cargo test --lib --features cuda                        # + GPU tests (needs CUDA GPU)
 cargo clippy --lib -- -D warnings                       # lint
 ```
+
+## Reference Trace Generation
+
+Reference `.npy` traces are generated with the TVB hybrid simulator for numerical validation.
+
+```bash
+./ref/setup.sh              # clone tvb-root (hybrid-numba), create venv, install deps
+./ref/setup.sh --check      # verify installation
+ref/venv/bin/python ref/generate_single_sim.py          # small 2-node configs
+ref/venv/bin/python ref/generate_single_sim.py --full   # include 74-node config
+ref/venv/bin/python ref/generate_sweep.py                # parameter sweeps
+ref/venv/bin/python ref/generate_bold.py                 # BOLD monitor outputs
+ref/venv/bin/python ref/generate_features.py             # feature extraction
+```
+
+- Venv at `ref/venv/`, tvb-root at `ref/tvb-root/` (both git-ignored). Run `./ref/setup.sh` to create.
+- Requires: [uv](https://docs.astral.sh/uv/), git.
+- Teardown: `rm -rf ref/venv ref/tvb-root`.
 
 ## WASM Build
 

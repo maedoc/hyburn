@@ -6,8 +6,8 @@ Runs G2DO with the TVB Bold monitor and saves:
   - Neural trajectory (var0 mean) as ref/bold/{name}_neural.npy  [n_steps, nnodes]
 
 Usage:
-    ref/.venv/bin/python ref/generate_bold.py
-    ref/.venv/bin/python ref/generate_bold.py --config g2do_bold
+    ref/venv/bin/python ref/generate_bold.py
+    ref/venv/bin/python ref/generate_bold.py --config g2do_bold
 """
 
 import os

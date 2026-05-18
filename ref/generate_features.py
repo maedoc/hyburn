@@ -10,7 +10,7 @@ Saves:
 Feature sets: classic, fc, spectral, temporal
 
 Usage:
-    ref/.venv/bin/python ref/generate_features.py
+    ref/venv/bin/python ref/generate_features.py
 """
 
 import os

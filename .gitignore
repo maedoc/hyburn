@@ -17,6 +17,10 @@ output/
 __pycache__/
 *.pyc
 
+# TVB reference venv and source (regenerated via ref/setup.sh)
+ref/venv/
+ref/tvb-root/
+
 # Benchmarks
 .benchmarks/
 
