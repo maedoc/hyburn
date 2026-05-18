@@ -1,7 +1,7 @@
 //! Configuration types (TOML-based).
 
 use serde::{Deserialize, Serialize};
-use crate::engine::integrator::IntegratorKind;
+use crate::engine::integrator::{IntegratorKind, NoiseMode};
 use crate::error::{Result, SimulationError};
 
 /// Polymorphic noise amplitude: scalar or per-variable.
@@ -90,6 +90,9 @@ pub struct SimConfig {
     /// Integration scheme.
     #[serde(default)]
     pub integrator: IntegratorKind,
+    /// Noise generation mode.
+    #[serde(default)]
+    pub noise_mode: NoiseMode,
     /// Monitor configuration.
     #[serde(default)]
     pub monitors: Vec<MonitorConfig>,
@@ -558,6 +561,7 @@ initial_state = [0.0, 0.5, 0.0, 0.5]
             stimuli: vec![],
             nsig: NsigConfig::Scalar(0.0),
             speed: 3.0,
+            noise_mode: Default::default(),
             backend: "ndarray".to_string(),
         };
         assert!(cfg.validate().is_err());
@@ -592,6 +596,7 @@ initial_state = [0.0, 0.5, 0.0, 0.5]
                 stimuli: vec![],
                 nsig: NsigConfig::Scalar(0.0),
                 speed: 3.0,
+            noise_mode: Default::default(),
             backend: "ndarray".to_string(),
             };
             cfg.validate().unwrap_or_else(|e| panic!("{} failed validation: {}", name, e));
@@ -618,6 +623,7 @@ initial_state = [0.0, 0.5, 0.0, 0.5]
             stimuli: vec![],
             nsig: NsigConfig::Scalar(0.0),
             speed: 3.0,
+            noise_mode: Default::default(),
             backend: "ndarray".to_string(),
         };
         let err = cfg.validate().unwrap_err();
@@ -753,6 +759,7 @@ initial_state = [0.0, 0.5, 0.0, 0.5]
             monitors: vec![],
             stimuli: vec![],
             nsig: NsigConfig::Scalar(0.0),
+            noise_mode: Default::default(),
             backend: "ndarray".to_string(),
         };
         cfg.resolve_delays().unwrap();
@@ -791,6 +798,7 @@ initial_state = [0.0, 0.5, 0.0, 0.5]
             monitors: vec![],
             stimuli: vec![],
             nsig: NsigConfig::Scalar(0.0),
+            noise_mode: Default::default(),
             backend: "ndarray".to_string(),
         };
         cfg.resolve_delays().unwrap();
@@ -828,6 +836,7 @@ initial_state = [0.0, 0.5, 0.0, 0.5]
             monitors: vec![],
             stimuli: vec![],
             nsig: NsigConfig::Scalar(0.0),
+            noise_mode: Default::default(),
             backend: "ndarray".to_string(),
         };
         assert!(cfg.resolve_delays().is_err());

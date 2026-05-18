@@ -1,10 +1,10 @@
 //! Integration schemes.
 
 use burn::prelude::Backend;
-use burn::tensor::{Tensor, TensorData};
+use burn::tensor::{Distribution, Tensor, TensorData};
 use rand::{thread_rng, SeedableRng};
 use rand::rngs::StdRng;
-use rand_distr::{Distribution, Normal};
+use rand_distr::{Distribution as RandDistribution, Normal};
 use std::cell::RefCell;
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -50,6 +50,35 @@ impl FromStr for IntegratorKind {
             "rk4" => Ok(IntegratorKind::Rk4),
             "rk4_stochastic" => Ok(IntegratorKind::Rk4Stochastic),
             _ => Err(format!("unknown integrator kind: {}", s)),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum NoiseMode {
+    #[default]
+    Reproducible,
+    Fast,
+}
+
+impl fmt::Display for NoiseMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            NoiseMode::Reproducible => write!(f, "reproducible"),
+            NoiseMode::Fast => write!(f, "fast"),
+        }
+    }
+}
+
+impl FromStr for NoiseMode {
+    type Err = String;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s {
+            "reproducible" => Ok(NoiseMode::Reproducible),
+            "fast" => Ok(NoiseMode::Fast),
+            _ => Err(format!("unknown noise mode: {}", s)),
         }
     }
 }
@@ -120,8 +149,25 @@ pub fn clear_seed() {
 ///
 /// `nsig_slice` has length equal to the number of columns (nvar).
 /// Each column `v` gets noise with scale `sqrt(2 * nsig_slice[v]) * sqrt(dt)`,
-/// matching TVB's convention where `nsig` is the noise dispersion coefficient D.
+/// matching TVB's convention where `nsig` is the noise dispersion D.
+///
+/// `noise_mode` controls how noise is generated:
+/// - `Reproducible`: CPU-side deterministic noise using seeded RNG (matches TVB bit-exact).
+/// - `Fast`: GPU-side noise using `Tensor::random` (faster on GPU backends, does not match TVB).
 pub fn generate_noise_per_var<B: Backend>(
+    shape: [usize; 2],
+    nsig_slice: &[f32],
+    dt: f32,
+    device: &B::Device,
+    noise_mode: NoiseMode,
+) -> Tensor<B, 2> {
+    match noise_mode {
+        NoiseMode::Reproducible => generate_noise_reproducible(shape, nsig_slice, dt, device),
+        NoiseMode::Fast => generate_noise_fast(shape, nsig_slice, dt, device),
+    }
+}
+
+fn generate_noise_reproducible<B: Backend>(
     shape: [usize; 2],
     nsig_slice: &[f32],
     dt: f32,
@@ -132,8 +178,6 @@ pub fn generate_noise_per_var<B: Backend>(
     let normal = Normal::new(0.0f64, 1.0).unwrap();
     let sqrt_dt = dt.sqrt();
 
-    // Sample in TVB C-order (v outer, row=n*nmodes+m inner) and place into
-    // hyburn's [nrows, ncols] C-order tensor at data[row*ncols + col].
     let mut data = vec![0.0f32; nrows * ncols];
     for col in 0..ncols {
         let scale = (2.0f32 * nsig_slice[col]).sqrt() * sqrt_dt;
@@ -153,6 +197,31 @@ pub fn generate_noise_per_var<B: Backend>(
     )
 }
 
+fn generate_noise_fast<B: Backend>(
+    shape: [usize; 2],
+    nsig_slice: &[f32],
+    dt: f32,
+    device: &B::Device,
+) -> Tensor<B, 2> {
+    let nrows = shape[0];
+    let ncols = shape[1];
+    let sqrt_dt = dt.sqrt();
+    let mut scales = vec![0.0f32; ncols];
+    for col in 0..ncols {
+        scales[col] = (2.0f32 * nsig_slice[col]).sqrt() * sqrt_dt;
+    }
+    let random_tensor = Tensor::<B, 2>::random(
+        [nrows, ncols],
+        Distribution::Normal(0.0, 1.0),
+        device,
+    );
+    let scale_tensor = Tensor::<B, 2>::from_floats(
+        TensorData::new::<f32, Vec<usize>>(scales, vec![1, ncols]),
+        device,
+    );
+    random_tensor * scale_tensor
+}
+
 /// Stochastic Euler-Maruyama step with per-variable noise.
 ///
 /// `state_new = state + dt * dfun(state, coupling) + Z`
@@ -165,9 +234,10 @@ pub fn euler_stochastic_step<B: Backend>(
     nsig: &[f32],
     dfun: impl Fn(Tensor<B, 2>, Tensor<B, 2>) -> Tensor<B, 2>,
     clamp: impl Fn(&mut Tensor<B, 2>),
+    noise_mode: NoiseMode,
 ) -> Tensor<B, 2> {
     let dims = state.shape().dims;
-    let noise = generate_noise_per_var::<B>([dims[0], dims[1]], nsig, dt, &state.device());
+    let noise = generate_noise_per_var::<B>([dims[0], dims[1]], nsig, dt, &state.device(), noise_mode);
     let d = dfun(state.clone(), coupling);
     let mut new_state = state + d.mul_scalar(dt) + noise;
     clamp(&mut new_state);
@@ -185,9 +255,10 @@ pub fn heun_stochastic_step<B: Backend>(
     nsig: &[f32],
     dfun: impl Fn(Tensor<B, 2>, Tensor<B, 2>) -> Tensor<B, 2>,
     clamp: impl Fn(&mut Tensor<B, 2>),
+    noise_mode: NoiseMode,
 ) -> Tensor<B, 2> {
     let dims = state.shape().dims;
-    let noise = generate_noise_per_var::<B>([dims[0], dims[1]], nsig, dt, &state.device());
+    let noise = generate_noise_per_var::<B>([dims[0], dims[1]], nsig, dt, &state.device(), noise_mode);
 
     let d0 = dfun(state.clone(), coupling.clone());
     let mut predictor = state.clone() + d0.clone().mul_scalar(dt) + noise.clone();
@@ -234,10 +305,11 @@ pub fn rk4_stochastic_step<B: Backend>(
     nsig: &[f32],
     dfun: impl Fn(Tensor<B, 2>, Tensor<B, 2>) -> Tensor<B, 2>,
     clamp: impl Fn(&mut Tensor<B, 2>),
+    noise_mode: NoiseMode,
 ) -> Tensor<B, 2> {
     let mut result = rk4_step(state, coupling, dt, dfun, clamp);
     let dims = result.shape().dims;
-    let noise = generate_noise_per_var::<B>([dims[0], dims[1]], nsig, dt, &result.device());
+    let noise = generate_noise_per_var::<B>([dims[0], dims[1]], nsig, dt, &result.device(), noise_mode);
     result = result + noise;
     result
 }
@@ -304,7 +376,7 @@ mod tests {
                 &device,
             );
             let coupling = Tensor::<B, 2>::zeros([4, 1], &device);
-            let result = rk4_stochastic_step(state, coupling, dt, &nsig, g2do_dfun, |s| *s = s.clone());
+            let result = rk4_stochastic_step(state, coupling, dt, &nsig, g2do_dfun, |s| *s = s.clone(), NoiseMode::Reproducible);
             let (flat, _) = crate::io::tensor_to_flat_f32::<B, 2>(result);
             for v in &flat { assert!(v.is_finite(), "RK4 stochastic produced NaN/Inf"); }
             results.push(flat);
@@ -319,8 +391,8 @@ mod tests {
         let device: <B as Backend>::Device = Default::default();
         let nsig_per_var = vec![0.0_f32, 0.1];
 
-        let noise1 = generate_noise_per_var::<B>([100, 2], &nsig_per_var, 0.1, &device);
-        let noise2 = generate_noise_per_var::<B>([100, 2], &nsig_per_var, 0.1, &device);
+        let noise1 = generate_noise_per_var::<B>([100, 2], &nsig_per_var, 0.1, &device, NoiseMode::Reproducible);
+        let noise2 = generate_noise_per_var::<B>([100, 2], &nsig_per_var, 0.1, &device, NoiseMode::Reproducible);
 
         let (flat1, _) = crate::io::tensor_to_flat_f32::<B, 2>(noise1);
         let (flat2, _) = crate::io::tensor_to_flat_f32::<B, 2>(noise2);
@@ -356,5 +428,43 @@ mod tests {
         assert_eq!(format!("{}", IntegratorKind::HeunStochastic), "heun_stochastic");
         assert_eq!(format!("{}", IntegratorKind::Rk4), "rk4");
         assert_eq!(format!("{}", IntegratorKind::Rk4Stochastic), "rk4_stochastic");
+    }
+
+    #[test]
+    fn test_noise_mode_default() {
+        assert_eq!(NoiseMode::default(), NoiseMode::Reproducible);
+    }
+
+    #[test]
+    fn test_noise_mode_from_str() {
+        assert_eq!("reproducible".parse::<NoiseMode>().unwrap(), NoiseMode::Reproducible);
+        assert_eq!("fast".parse::<NoiseMode>().unwrap(), NoiseMode::Fast);
+        assert!("unknown".parse::<NoiseMode>().is_err());
+    }
+
+    #[test]
+    fn test_noise_mode_display() {
+        assert_eq!(format!("{}", NoiseMode::Reproducible), "reproducible");
+        assert_eq!(format!("{}", NoiseMode::Fast), "fast");
+    }
+
+    #[test]
+    fn test_noise_mode_fast_produces_finite_noise() {
+        let device: <B as Backend>::Device = Default::default();
+        let nsig = vec![0.1_f32, 0.2];
+        let noise = generate_noise_per_var::<B>([50, 2], &nsig, 0.1, &device, NoiseMode::Fast);
+        let (flat, _) = crate::io::tensor_to_flat_f32::<B, 2>(noise);
+        assert!(flat.iter().all(|v| v.is_finite()), "Fast noise should be finite");
+        assert!(flat.iter().any(|v| v.abs() > 0.0), "Fast noise should not be all zeros");
+    }
+
+    #[test]
+    fn test_noise_mode_fast_per_variable_zero_scale() {
+        let device: <B as Backend>::Device = Default::default();
+        let nsig = vec![0.0_f32, 0.1];
+        let noise = generate_noise_per_var::<B>([50, 2], &nsig, 0.1, &device, NoiseMode::Fast);
+        let (flat, _) = crate::io::tensor_to_flat_f32::<B, 2>(noise);
+        let var0: Vec<f32> = flat.iter().step_by(2).copied().collect();
+        assert!(var0.iter().all(|x| x.abs() < 1e-10), "Variable 0 should have zero noise (nsig=0) in fast mode");
     }
 }

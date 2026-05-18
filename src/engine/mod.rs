@@ -18,7 +18,7 @@ pub mod sweep_gpu;
 // Re-export construction types at crate::engine level for backward compat.
 pub use construction::{
     EngineModel, HybridEngine, Projection, ProgressReporter,
-    IntegratorKind, euler_step, euler_stochastic_step, heun_step, heun_stochastic_step, rk4_step, rk4_stochastic_step,
+    IntegratorKind, NoiseMode, euler_step, euler_stochastic_step, heun_step, heun_stochastic_step, rk4_step, rk4_stochastic_step,
     CKPT_MAGIC, CKPT_VERSION, parse_cvar_map,
 };
 
