@@ -10,6 +10,11 @@ use crate::engine::coupling::CouplingFnConfig;
 
 /// CSR matrix–vector multiply on CPU.
 ///
+/// This is a CPU-only operation. When used inside [`sparse_coupling`] with GPU
+/// backends, it forces a GPU→CPU download of the `pre()` result and a
+/// CPU→GPU upload of the weighted sum back to the device. See
+/// [`sparse_coupling`] for the full performance discussion.
+///
 /// # Arguments
 /// - `data`   – non-zero values, length `nnz`.
 /// - `indices` – column indices for each non-zero, length `nnz`.
@@ -50,6 +55,17 @@ pub fn sparse_csr_matvec(
 ///
 /// Pipeline: `post_with_target(W @ pre(x_j), x_i)`
 ///
+/// ## Performance (GPU backends)
+///
+/// This function forces a GPU→CPU→GPU round-trip: `pre()` runs on GPU,
+/// the result is downloaded to CPU for CSR matvec, and the weighted sum
+/// is uploaded back to GPU for `post_with_target()`. This creates 2 GPU
+/// pipeline sync points per call. For large networks on wgpu/Metal/CUDA,
+/// consider using dense coupling (`dense_coupling`) instead when the
+/// sparse matrix can be densified without excessive memory overhead.
+///
+/// A future GPU-native CSR matmul kernel would eliminate this bottleneck.
+///
 /// # Arguments
 /// - `csr_data`    – non-zero values, length `nnz`.
 /// - `csr_indices` – column indices, length `nnz`.
@@ -67,16 +83,26 @@ pub fn sparse_coupling<B: Backend>(
     coupling_cfg: &CouplingFnConfig,
     x_i: Option<Tensor<B, 2>>,
 ) -> Tensor<B, 2> {
+    sparse_coupling_cached(csr_data, csr_indices, csr_indptr, delayed_state, coupling_cfg, x_i, None)
+}
+
+pub fn sparse_coupling_cached<B: Backend>(
+    csr_data: &[f32],
+    csr_indices: &[usize],
+    csr_indptr: &[usize],
+    delayed_state: Tensor<B, 2>,
+    coupling_cfg: &CouplingFnConfig,
+    x_i: Option<Tensor<B, 2>>,
+    cached_rowsums: Option<&Tensor<B, 2>>,
+) -> Tensor<B, 2> {
     let device = delayed_state.device();
 
-    // Step 1: Apply pre() per-edge (per source node)
     let pre_result = coupling_cfg.pre(delayed_state);
     let (pre_data, pre_shape) = crate::io::tensor_to_flat_f32(pre_result);
     let nsrc = pre_shape[0];
     let pre_ncvar = pre_shape[1];
     let ntgt = csr_indptr.len().saturating_sub(1);
 
-    // Step 2: Weighted sum via CSR matvec (one matvec per pre output channel)
     let mut weighted_sum_data = vec![0.0_f32; ntgt * pre_ncvar];
     for k in 0..pre_ncvar {
         let x: Vec<f32> = (0..nsrc).map(|i| pre_data[i * pre_ncvar + k]).collect();
@@ -92,8 +118,7 @@ pub fn sparse_coupling<B: Backend>(
         &device,
     );
 
-    // Step 3: Apply post_with_target() to the weighted sum
-    coupling_cfg.post_with_target(weighted_sum, x_i)
+    coupling_cfg.post_with_target_cached(weighted_sum, x_i, cached_rowsums)
 }
 
 #[cfg(test)]
@@ -326,6 +351,7 @@ mod tests {
             stimuli: vec![],
             nsig: crate::config::NsigConfig::Scalar(0.0),
             speed: 3.0,
+            noise_mode: Default::default(),
             backend: "ndarray".to_string(),
         };
 
@@ -341,6 +367,7 @@ mod tests {
             stimuli: vec![],
             nsig: crate::config::NsigConfig::Scalar(0.0),
             speed: 3.0,
+            noise_mode: Default::default(),
             backend: "ndarray".to_string(),
         };
 

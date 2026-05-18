@@ -9,8 +9,8 @@ use crate::error::{Result, SimulationError};
 
 use super::construction::{HybridEngine, IntegratorKind, CKPT_MAGIC, CKPT_VERSION};
 use super::monitor::Monitor;
-use super::sparse::sparse_coupling;
-use super::coupling::{CouplingFnConfig, dense_coupling};
+use super::sparse::sparse_coupling_cached;
+use super::coupling::{CouplingFnConfig, dense_coupling_cached};
 
 impl<B: Backend> HybridEngine<B> {
 
@@ -123,6 +123,11 @@ impl<B: Backend> HybridEngine<B> {
                         .unwrap_or(false);
 
                     if has_per_edge_delays {
+                        // Per-edge delay path: download history to CPU ONCE, iterate
+                        // edges on CPU-side data, apply pre() on CPU, then upload the
+                        // final weighted sum ONCE. This avoids the GPU sync storm
+                        // where each edge previously caused a separate GPU→CPU
+                        // download (O(n_edges) syncs per timestep).
                         let ntgt = csr_indptr.len() - 1;
                         let pre_ncvar = if let CouplingFnConfig::Kuramoto { .. } = proj.coupling_cfg {
                             ncvar_extract * 2
@@ -132,33 +137,65 @@ impl<B: Backend> HybridEngine<B> {
                         let mut weighted_sum = vec![0.0f32; ntgt * pre_ncvar];
                         let h = &self.histories[proj.src];
                         let horizon = h.shape().dims[3];
+                        let nsrc = src_sub.nnodes;
+
+                        // Download current (undelayed) cvars to CPU: [nsrc, ncvar_extract]
+                        let (cvars_flat, _) = crate::io::tensor_to_flat_f32(cvars_t.clone());
+
+                        // Download entire history buffer to CPU: [nvar, nnodes, nmodes, horizon]
+                        let (hist_flat, hist_shape) = crate::io::tensor_to_flat_f32(h.clone());
+
+                        // Pre-compute pre() for all nodes at current time (delay=0)
+                        // This handles the common case where most edges have delay=0
+                        let mut pre_current: Vec<Vec<f32>> = Vec::with_capacity(nsrc);
+                        for s in 0..nsrc {
+                            let row = &cvars_flat[s * ncvar_extract..(s + 1) * ncvar_extract];
+                            pre_current.push(proj.coupling_cfg.pre_cpu(row));
+                        }
+
+                        // Cache for pre-computed delayed states, keyed by (source_node, delay_slot)
+                        // We don't expect many unique delay slots, so a simple scan is fine.
+                        let mut pre_delayed_cache: Vec<(usize, usize, Vec<f32>)> = Vec::new();
+
+                        let idelays = proj.csr_idelays.as_ref().unwrap();
 
                         for tgt in 0..ntgt {
                             for edge_idx in csr_indptr[tgt]..csr_indptr[tgt + 1] {
                                 let src_node = csr_indices[edge_idx];
                                 let weight = csr_data[edge_idx];
-                                let edge_delay = proj.csr_idelays.as_ref()
-                                    .and_then(|d| d.get(edge_idx).copied())
-                                    .unwrap_or(0);
+                                let edge_delay = idelays[edge_idx];
 
-                                let src_row = if edge_delay == 0 || self.step == 0 {
-                                    cvars_t.clone().narrow(0, src_node, 1) // [1, ncvar], GPU tensor
+                                let pre_data = if edge_delay == 0 || self.step == 0 {
+                                    &pre_current[src_node]
                                 } else {
                                     let raw_delay = edge_delay as usize;
-                                    if raw_delay <= self.step {
-                                        let slot = (self.step - raw_delay + horizon) % horizon;
-                                        let delayed_state = h.clone().narrow(3, slot, 1).squeeze::<3>(3);
-                                        let delayed_mode_state = delayed_state.narrow(2, mode, 1).squeeze::<2>(2);
-                                        let delayed_cvars = delayed_mode_state.narrow(0, 0, ncvar_extract);
-                                        delayed_cvars.permute([1, 0]).narrow(0, src_node, 1) // [1, ncvar], GPU tensor
+                                    if raw_delay > self.step {
+                                        static ZERO: std::sync::OnceLock<Vec<f32>> = std::sync::OnceLock::new();
+                                        ZERO.get_or_init(|| vec![0.0f32; pre_ncvar])
                                     } else {
-                                        Tensor::<B, 2>::zeros([1, ncvar_extract], &self.device) // [1, ncvar], GPU tensor
+                                        let slot = (self.step - raw_delay + horizon) % horizon;
+                                        // Check cache for (src_node, slot)
+                                        if let Some(cached) = pre_delayed_cache.iter().find(|(s, sl, _)| *s == src_node && *sl == slot) {
+                                            &cached.2
+                                        } else {
+                                            // Extract delayed row from CPU history buffer
+                                            // hist shape: [nvar, nnodes, nmodes, horizon]
+                                            // Layout: nvar * nnodes * nmodes * horizon
+                                            // Index: [v][n][m][t] = v * nnodes * nmodes * horizon + n * nmodes * horizon + m * horizon + t
+                                            let stride_n = hist_shape[2] * horizon;
+                                            let stride_m = horizon;
+                                            let mut delayed_row = vec![0.0f32; ncvar_extract];
+                                            let ncvar = ncvar_extract.min(hist_shape[0]);
+                                            for (v, slot_val) in delayed_row.iter_mut().enumerate().take(ncvar) {
+                                                let idx = v * (nsrc * stride_n) + src_node * stride_n + mode * stride_m + slot;
+                                                *slot_val = hist_flat[idx];
+                                            }
+                                            let pre_val = proj.coupling_cfg.pre_cpu(&delayed_row);
+                                            pre_delayed_cache.push((src_node, slot, pre_val));
+                                            &pre_delayed_cache.last().unwrap().2
+                                        }
                                     }
-                                }; // src_row is [1, ncvar] — a GPU tensor, no CPU copy
-
-                                // Apply pre() per-edge (before weighting)
-                                let pre_result = proj.coupling_cfg.pre(src_row);
-                                let pre_data = crate::io::tensor_to_flat_f32(pre_result).0;
+                                };
 
                                 for cvar in 0..pre_ncvar {
                                     weighted_sum[tgt * pre_ncvar + cvar] += weight * pre_data[cvar];
@@ -166,12 +203,12 @@ impl<B: Backend> HybridEngine<B> {
                             }
                         }
 
-                        // Apply post_with_target() to the weighted sum
+                        // Upload weighted sum ONCE and apply post_with_target() on GPU
                         let weighted_sum_tensor = Tensor::<B, 2>::from_floats(
                             TensorData::new::<f32, Vec<usize>>(weighted_sum, vec![ntgt, pre_ncvar]),
                             &self.device,
                         );
-                        proj.coupling_cfg.post_with_target(weighted_sum_tensor, x_i)
+                        proj.coupling_cfg.post_with_target_cached(weighted_sum_tensor, x_i, proj.rowsums_tensor.as_ref())
                     } else {
                         let delayed_cvars = if let Some(delay) = proj.delays.first().copied() {
                             if delay == 0 || self.step == 0 {
@@ -194,13 +231,14 @@ impl<B: Backend> HybridEngine<B> {
                             cvars_t.clone()
                         };
 
-                        sparse_coupling(
+                        sparse_coupling_cached(
                             csr_data,
                             csr_indices,
                             csr_indptr,
                             delayed_cvars,
                             &proj.coupling_cfg,
                             x_i,
+                            proj.rowsums_tensor.as_ref(),
                         )
                     }
                 } else {
@@ -226,7 +264,7 @@ impl<B: Backend> HybridEngine<B> {
                     };
 
                     // Pipeline: pre(x_j) → W @ pre(x_j) → post_with_target(gx, x_i)
-                    dense_coupling(proj.weights.clone(), delayed_cvars, &proj.coupling_cfg, x_i)
+                    dense_coupling_cached(proj.weights.clone(), delayed_cvars, &proj.coupling_cfg, x_i, proj.rowsums_tensor.as_ref())
                 };
                 mode_couplings.push(mode_coup);
             }
@@ -353,6 +391,7 @@ impl<B: Backend> HybridEngine<B> {
                     &self.nsig,
                     |s, c| sub.dfun(s, c),
                     |s| sub.clamp(s),
+                    self.noise_mode,
                 ),
                 IntegratorKind::HeunStochastic => super::integrator::heun_stochastic_step(
                     state_2d,
@@ -361,6 +400,7 @@ impl<B: Backend> HybridEngine<B> {
                     &self.nsig,
                     |s, c| sub.dfun(s, c),
                     |s| sub.clamp(s),
+                    self.noise_mode,
                 ),
                 IntegratorKind::Rk4 => super::integrator::rk4_step(
                     state_2d,
@@ -376,6 +416,7 @@ impl<B: Backend> HybridEngine<B> {
                     &self.nsig,
                     |s, c| sub.dfun(s, c),
                     |s| sub.clamp(s),
+                    self.noise_mode,
                 ),
             };
 
