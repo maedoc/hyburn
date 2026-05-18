@@ -106,6 +106,7 @@ fn make_3subnet_config(nnodes: usize) -> SimConfig {
         monitors: vec![],
         stimuli: vec![],
         nsig: NsigConfig::Scalar(0.0),
+        noise_mode: Default::default(),
         speed: 3.0,
         backend: "ndarray".to_string(),
     }

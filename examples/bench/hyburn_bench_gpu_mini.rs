@@ -36,7 +36,7 @@ fn make_3subnet_config(nnodes: usize) -> SimConfig {
                 ProjectionConfig { src: 2, tgt: 0, conn_type: "all_to_all".to_string(), weights: WeightsConfig::Scalar(0.01), delays: vec![], tract_lengths: vec![], coupling_fn: "Linear".to_string(), coupling_params: vec![0.01], cvar_map: "0:0".to_string() },
             ],
         },
-        integrator: IntegratorKind::Heun, monitors: vec![], stimuli: vec![], nsig: NsigConfig::Scalar(0.0), speed: 3.0,
+        integrator: IntegratorKind::Heun, monitors: vec![], stimuli: vec![], nsig: NsigConfig::Scalar(0.0), noise_mode: Default::default(), speed: 3.0,
     }
 }
 

@@ -97,6 +97,7 @@ fn main() {
             monitors: vec![],
             stimuli: vec![],
             nsig: NsigConfig::Scalar(0.0),
+            noise_mode: Default::default(),
             speed: 3.0,
             backend: "ndarray".to_string(),
         };
@@ -129,6 +130,6 @@ fn make_config(nnodes: usize, w: f32) -> SimConfig {
                 ProjectionConfig { src: 2, tgt: 0, conn_type: "all_to_all".to_string(), weights: WeightsConfig::Scalar(w), coupling_fn: "Linear".to_string(), coupling_params: vec![1.0], cvar_map: "0:0".to_string(), delays: vec![0], tract_lengths: vec![] },
             ],
         },
-        integrator: IntegratorKind::Heun, monitors: vec![], stimuli: vec![], nsig: NsigConfig::Scalar(0.0), speed: 3.0,
+        integrator: IntegratorKind::Heun, monitors: vec![], stimuli: vec![], nsig: NsigConfig::Scalar(0.0), noise_mode: Default::default(), speed: 3.0,
     }
 }

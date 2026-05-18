@@ -89,7 +89,7 @@ fn test_ref_g2do_small_final_state() {
         sim_length: 10.0,
         dt: 0.1,
         integrator: IntegratorKind::Heun,
-        nsig: crate::config::NsigConfig::Scalar(0.0),
+        nsig: hyburn::config::NsigConfig::Scalar(0.0),
         speed: 3.0,
         backend: "ndarray".to_string(),
         network: NetworkConfig {
@@ -104,6 +104,7 @@ fn test_ref_g2do_small_final_state() {
         },
         monitors: vec![],
         stimuli: vec![],
+        noise_mode: Default::default(),
     };
 
     let device = Default::default();
@@ -128,7 +129,7 @@ fn test_ref_g2do_small_trajectory() {
         sim_length: 10.0,
         dt: 0.1,
         integrator: IntegratorKind::Heun,
-        nsig: crate::config::NsigConfig::Scalar(0.0),
+        nsig: hyburn::config::NsigConfig::Scalar(0.0),
         speed: 3.0,
         backend: "ndarray".to_string(),
         network: NetworkConfig {
@@ -143,6 +144,7 @@ fn test_ref_g2do_small_trajectory() {
         },
         monitors: vec![],
         stimuli: vec![],
+        noise_mode: Default::default(),
     };
 
     let device = Default::default();
@@ -188,7 +190,7 @@ fn test_ref_mpr_small_final_state() {
         sim_length: 10.0,
         dt: 0.1,
         integrator: IntegratorKind::Euler,
-        nsig: crate::config::NsigConfig::Scalar(0.0),
+        nsig: hyburn::config::NsigConfig::Scalar(0.0),
         speed: 3.0,
         backend: "ndarray".to_string(),
         network: NetworkConfig {
@@ -203,6 +205,7 @@ fn test_ref_mpr_small_final_state() {
         },
         monitors: vec![],
         stimuli: vec![],
+        noise_mode: Default::default(),
     };
 
     let device = Default::default();
@@ -224,7 +227,7 @@ fn test_ref_kuramoto_small_final_state() {
         sim_length: 10.0,
         dt: 0.1,
         integrator: IntegratorKind::Euler,
-        nsig: crate::config::NsigConfig::Scalar(0.0),
+        nsig: hyburn::config::NsigConfig::Scalar(0.0),
         speed: 3.0,
         backend: "ndarray".to_string(),
         network: NetworkConfig {
@@ -239,6 +242,7 @@ fn test_ref_kuramoto_small_final_state() {
         },
         monitors: vec![],
         stimuli: vec![],
+        noise_mode: Default::default(),
     };
 
     let device = Default::default();
@@ -281,7 +285,7 @@ fn test_ref_g2do_74_final_state() {
         sim_length: 1000.0,
         dt: 0.1,
         integrator: IntegratorKind::Heun,
-        nsig: crate::config::NsigConfig::Scalar(0.0),
+        nsig: hyburn::config::NsigConfig::Scalar(0.0),
         speed: 3.0,
         backend: "ndarray".to_string(),
         network: NetworkConfig {
@@ -298,6 +302,7 @@ fn test_ref_g2do_74_final_state() {
         },
         monitors: vec![],
         stimuli: vec![],
+        noise_mode: Default::default(),
     };
 
     let device = Default::default();
@@ -359,7 +364,7 @@ fn test_ref_g2do_sweep_final_states() {
             sim_length: 1000.0,
             dt: 0.1,
             integrator: IntegratorKind::Heun,
-            nsig: crate::config::NsigConfig::Scalar(0.0),
+            nsig: hyburn::config::NsigConfig::Scalar(0.0),
         speed: 3.0,
         backend: "ndarray".to_string(),
             network: NetworkConfig {
@@ -376,6 +381,7 @@ fn test_ref_g2do_sweep_final_states() {
             },
             monitors: vec![],
             stimuli: vec![],
+            noise_mode: Default::default(),
         };
 
         let mut engine = HybridEngine::<B>::from_config(cfg, device)
@@ -471,7 +477,7 @@ fn test_ref_bold_e2e() {
         sim_length: 2000.0,  // 2 s
         dt: 0.1,
         integrator: IntegratorKind::Heun,
-        nsig: crate::config::NsigConfig::Scalar(0.0),
+        nsig: hyburn::config::NsigConfig::Scalar(0.0),
         speed: 3.0,
         backend: "ndarray".to_string(),
         network: NetworkConfig {
@@ -489,8 +495,13 @@ fn test_ref_bold_e2e() {
             period: None,
             tr: Some(2.0),
             bold_period: Some(10),
+            gain: None,
+            gain_path: None,
+            voi: None,
+            spatial_mask: None,
         }],
         stimuli: vec![],
+        noise_mode: Default::default(),
     };
 
     let device = Default::default();
@@ -520,7 +531,7 @@ fn test_ref_features_classic() {
         sim_length: 10.0,
         dt: 0.1,
         integrator: IntegratorKind::Heun,
-        nsig: crate::config::NsigConfig::Scalar(0.0),
+        nsig: hyburn::config::NsigConfig::Scalar(0.0),
         speed: 3.0,
         backend: "ndarray".to_string(),
         network: NetworkConfig {
@@ -535,6 +546,7 @@ fn test_ref_features_classic() {
         },
         monitors: vec![],
         stimuli: vec![],
+        noise_mode: Default::default(),
     };
 
     let device = Default::default();
@@ -599,7 +611,7 @@ fn test_ref_features_spectral() {
         sim_length: 1000.0,  // 1 s → 10000 samples at dt=0.1ms
         dt: 0.1,
         integrator: IntegratorKind::Heun,
-        nsig: crate::config::NsigConfig::Scalar(0.0),
+        nsig: hyburn::config::NsigConfig::Scalar(0.0),
         speed: 3.0,
         backend: "ndarray".to_string(),
         network: NetworkConfig {
@@ -614,6 +626,7 @@ fn test_ref_features_spectral() {
         },
         monitors: vec![],
         stimuli: vec![],
+        noise_mode: Default::default(),
     };
 
     let device = Default::default();
@@ -787,7 +800,7 @@ fn test_ref_jr_coupling_psd_sweep() {
             sim_length,
             dt,
             integrator: IntegratorKind::Heun,
-            nsig: crate::config::NsigConfig::Scalar(0.0),
+            nsig: hyburn::config::NsigConfig::Scalar(0.0),
             speed: 3.0,
             backend: "ndarray".to_string(),
             network: NetworkConfig {
@@ -816,6 +829,7 @@ fn test_ref_jr_coupling_psd_sweep() {
             },
             monitors: vec![],
             stimuli: vec![],
+            noise_mode: Default::default(),
         };
 
         cfg.validate().expect("Config should validate");

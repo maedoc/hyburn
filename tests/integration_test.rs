@@ -136,7 +136,8 @@ fn test_config_validation_rejects_invalid_dt() {
         integrator: IntegratorKind::Heun,
         monitors: vec![],
         stimuli: vec![],
-        nsig: crate::config::NsigConfig::Scalar(0.0),
+        nsig: hyburn::config::NsigConfig::Scalar(0.0),
+        noise_mode: Default::default(),
         speed: 3.0,
         backend: "ndarray".to_string(),
     };
@@ -164,7 +165,8 @@ fn test_config_validation_rejects_unknown_model() {
         integrator: IntegratorKind::Heun,
         monitors: vec![],
         stimuli: vec![],
-        nsig: crate::config::NsigConfig::Scalar(0.0),
+        nsig: hyburn::config::NsigConfig::Scalar(0.0),
+        noise_mode: Default::default(),
         speed: 3.0,
         backend: "ndarray".to_string(),
     };
@@ -213,7 +215,8 @@ fn test_all_models_run_without_crash() {
             integrator: hyburn::engine::integrator::IntegratorKind::Euler,
             monitors: vec![],
             stimuli: vec![],
-            nsig: crate::config::NsigConfig::Scalar(0.0),
+            nsig: hyburn::config::NsigConfig::Scalar(0.0),
+            noise_mode: Default::default(),
             speed: 3.0,
             backend: "ndarray".to_string(),
         };

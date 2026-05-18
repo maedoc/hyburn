@@ -45,7 +45,7 @@ fn run_model(model: &str, nnodes: usize, params: Vec<f32>, initial_state: Vec<f3
         sim_length: dt * n_steps as f64,
         dt,
         integrator,
-        nsig: crate::config::NsigConfig::Scalar(0.0),
+        nsig: hyburn::config::NsigConfig::Scalar(0.0),
         speed: 3.0,
         backend: "ndarray".to_string(),
         network: NetworkConfig {
@@ -60,6 +60,7 @@ fn run_model(model: &str, nnodes: usize, params: Vec<f32>, initial_state: Vec<f3
         },
         monitors: vec![],
         stimuli: vec![],
+        noise_mode: Default::default(),
     };
     cfg.validate().unwrap_or_else(|e| panic!("{} config validation: {}", model, e));
 
@@ -207,7 +208,8 @@ fn test_all_22_new_models_smoke() {
             integrator: IntegratorKind::Euler,
             monitors: vec![],
             stimuli: vec![],
-            nsig: crate::config::NsigConfig::Scalar(0.0),
+            nsig: hyburn::config::NsigConfig::Scalar(0.0),
+            noise_mode: Default::default(),
         };
         cfg.validate().unwrap_or_else(|e| panic!("{} config: {}", name, e));
 
