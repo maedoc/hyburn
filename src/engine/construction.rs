@@ -14,7 +14,7 @@ use crate::error::{Result, SimulationError};
 
 use super::coupling::CouplingFnConfig;
 use super::stimulus::StimulusApplier;
-pub use super::integrator::{IntegratorKind, euler_step, euler_stochastic_step, heun_step, heun_stochastic_step, rk4_step, rk4_stochastic_step};
+pub use super::integrator::{IntegratorKind, NoiseMode, euler_step, euler_stochastic_step, heun_step, heun_stochastic_step, rk4_step, rk4_stochastic_step};
 use super::subnetwork::Subnetwork;
 
 /// Supported engine models (dispatches to concrete `NeuralMassModel` impls).
@@ -289,9 +289,8 @@ pub struct Projection<B: Backend> {
     pub csr_indptr: Option<Vec<usize>>,
     pub csr_idelays: Option<Vec<u32>>,
     pub is_sparse: bool,
-    /// Cvar mapping: pairs of (src_cvar_idx, tgt_cvar_idx).
-    /// Parsed from config "src:tgt" format.
     pub cvar_map: Vec<(usize, usize)>,
+    pub rowsums_tensor: Option<Tensor<B, 2>>,
 }
 
 /// Parse a cvar_map string like "0:0" or "0:0,1:1" into pairs of (src, tgt) indices.
@@ -345,6 +344,8 @@ pub struct HybridEngine<B: Backend> {
     pub trajectory: Vec<f32>,
     /// Noise amplitude per variable for stochastic integration.
     pub nsig: Vec<f32>,
+    /// Noise generation mode.
+    pub noise_mode: NoiseMode,
     /// Optional progress reporter.
     pub progress: Option<ProgressReporter>,
     /// Active BOLD monitors.
@@ -356,11 +357,11 @@ pub struct HybridEngine<B: Backend> {
     /// accumulated for each BOLD monitor. Indices match bold_monitors.
     pub bold_accumulator_counts: Vec<usize>,
     /// Active sensor projection monitors (EEG/MEG/iEEG).
-    pub sensor_monitors: Vec<crate::engine::monitor::SensorProjectionMonitor>,
+    pub sensor_monitors: Vec<crate::engine::monitor::SensorProjectionMonitor<B>>,
     /// Target subnetwork index for each sensor monitor.
     pub sensor_monitor_targets: Vec<usize>,
     /// Active spatial average monitors.
-    pub spatial_monitors: Vec<crate::engine::monitor::SpatialAverageMonitor>,
+    pub spatial_monitors: Vec<crate::engine::monitor::SpatialAverageMonitor<B>>,
     /// Target subnetwork index for each spatial average monitor.
     pub spatial_monitor_targets: Vec<usize>,
 }
@@ -485,7 +486,8 @@ impl<B: Backend> HybridEngine<B> {
             stimuli: vec![],
             trajectory: Vec::new(),
             nsig: vec![0.0],
-progress: None,
+            noise_mode: NoiseMode::default(),
+            progress: None,
             bold_monitors: vec![],
             bold_accumulators: vec![],
             bold_accumulator_counts: vec![],
@@ -709,6 +711,18 @@ progress: None,
                 }
             }
 
+            let rowsums_tensor = if let CouplingFnConfig::Difference { rowsums: Some(ref rs), .. } = coupling_cfg {
+                let tgt_ncvar = subnetworks[proj_cfg.tgt].ncvar;
+                Some(
+                    Tensor::<B, 1>::from_floats(
+                        TensorData::new(rs.clone(), vec![tgt_nnodes]),
+                        &device,
+                    ).unsqueeze_dim::<2>(1).expand([tgt_nnodes, tgt_ncvar])
+                )
+            } else {
+                None
+            };
+
             projections.push(Projection {
                 src: proj_cfg.src,
                 tgt: proj_cfg.tgt,
@@ -721,6 +735,7 @@ progress: None,
                 csr_idelays,
                 is_sparse,
                 cvar_map: cvar_map_parsed,
+                rowsums_tensor,
             });
         }
 
@@ -811,7 +826,7 @@ progress: None,
                     .unwrap_or(1);
 
                 let sm = crate::engine::monitor::SensorProjectionMonitor::new(
-                    gain, voi, period_steps, nvar, nnodes, nmodes,
+                    gain, voi, period_steps, nvar, nnodes, nmodes, &device,
                 );
                 sensor_monitors.push(sm);
                 sensor_monitor_targets.push(target);
@@ -839,7 +854,7 @@ progress: None,
                 let voi = mon_cfg.voi.clone().unwrap_or_default();
 
                 let sm = crate::engine::monitor::SpatialAverageMonitor::new(
-                    mask, voi, period_steps, nvar, nnodes, nmodes,
+                    mask, voi, period_steps, nvar, nnodes, nmodes, &device,
                 );
                 spatial_monitors.push(sm);
                 spatial_monitor_targets.push(target);
@@ -864,6 +879,7 @@ progress: None,
                 .collect::<Result<Vec<_>>>()?,
             trajectory: Vec::new(),
             nsig: nsig_vec,
+            noise_mode: cfg.noise_mode,
             progress: None,
             bold_accumulators: vec![],
             bold_accumulator_counts: vec![0; bold_monitors.len()],
