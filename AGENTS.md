@@ -124,6 +124,8 @@ Workflow: `.github/workflows/ci.yml` with 5 jobs:
 4. **Build Linux** (ubuntu-22.04) — CUDA 12.6 + Vulkan, `cargo build --release --features "wgpu,cuda"`, strip, upload artifact
 5. **WASM E2E** (ubuntu-latest) — wasm-pack build, Playwright (Firefox)
 
+The WASM build fails sometimes, remember to investigate.
+
 Release job triggers on `v*` tags, downloads both artifacts, creates GitHub Release.
 
 ## Key Gotchas
